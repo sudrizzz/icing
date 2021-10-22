@@ -1,3 +1,5 @@
+import os.path
+
 from DataProcess import *
 
 
@@ -6,17 +8,14 @@ if __name__ == '__main__':
     # generate_input()
 
     # 提取冰型、结冰部分翼型以及完整翼型，并保存
-    raw_data_path = 'C:/Users/Administrator/project/naca/raw_data/'
-    new_data_path = 'C:/Users/Administrator/project/naca/data/'
-    # types = ['0006', '0008', '0009', '0010', '0012', '0015', '0018', '0021', '0024', '1408', '1410', '1412', '2408',
-    #          '2410', '2411', '2412', '2414', '2415', '2418', '2421', '2424', '4412', '4415', '4418', '4421', '4424',
-    #          '6409', '6412', '22112', '23012', '23015', '23018', '23021', '23024', '23112', '24112', '25112', ]
-    types = ['23015']
+    raw_data_path = 'C:/Users/xvyn/data/naca/raw_data/'
+    new_data_path = 'C:/Users/xvyn/data/naca/data/'
+    types = os.listdir(raw_data_path)
     rows = 401
-    extraction_ice_shape(raw_data_path, new_data_path, types, rows)
+    # extraction_ice_shape(raw_data_path, new_data_path, types, rows)
 
     # 将 x-y 坐标数据转换为 ξ-η 坐标数据，然后将其拟合成傅里叶级数，并保存为 csv 文件
-    # save_fourier_coeffient(types)
+    save_fourier_coeffient(new_data_path)
 
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图
     # test = np.genfromtxt('./output/test.txt', delimiter='\t')

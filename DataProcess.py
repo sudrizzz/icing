@@ -376,7 +376,7 @@ def generate_fourier_coefficient(ksi, eta):
 
 
 @jit
-def save_fourier_coeffient(types):
+def save_fourier_coeffient(data_path):
     """
     保存傅里叶级数到 csv 文件
 
@@ -384,14 +384,15 @@ def save_fourier_coeffient(types):
     """
     sequence = generate_sequence()
     list, temp_list = [], []
+    types = os.listdir(data_path)
     for type in types:
         print(type)
         temp_list = []
         for number in sequence:
             # 转换坐标系
-            full_foil_path = './data/' + type + '/body/' + str(number) + '.csv'
-            partial_foil_path = './data/' + type + '/foil/' + str(number) + '.csv'
-            ice_path = './data/' + type + '/ice/' + str(number) + '.csv'
+            full_foil_path = data_path + type + '/body/' + str(number) + '.csv'
+            partial_foil_path = data_path + type + '/foil/' + str(number) + '.csv'
+            ice_path = data_path + type + '/ice/' + str(number) + '.csv'
             ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
             if ksi is None or eta is None:
                 list.append([])
@@ -401,11 +402,11 @@ def save_fourier_coeffient(types):
             coefficient = generate_fourier_coefficient(ksi, eta)
             list.append(coefficient)
             temp_list.append(coefficient)
-        path = './output/' + type + '.csv'
+        path = 'C:/Users/xvyn/data/naca/output/' + type + '.csv'
         df = pd.DataFrame(np.concatenate(temp_list))
         df.to_csv(path, sep=',', index=False, header=False)
 
-    path = './output/fourier.csv'
+    path = 'C:/Users/xvyn/data/naca/output/fourier.csv'
     df = pd.DataFrame(np.concatenate(list))
     df.to_csv(path, sep=',', index=False, header=False)
 
