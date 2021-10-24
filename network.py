@@ -1,47 +1,67 @@
-import numpy as np
 import torch
+import torch.nn as nn
+import numpy as np
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from torchvision import transforms
+from PIL import Image
 
 train_loss = []
 validate_loss = []
 options = {
-    'method': 'test',
-    'type': 'limit',
+    'method': 'train',
+    'type': 'cosine',
     'in_feature': 5,
-    'learning_rate': 1e-4,
+    'learning_rate': 1e-3,
     'weight_decay': 1e-7,
-    'epochs': 10,
-    'train_batch_size': 50,
-    'validate_batch_size': 50
+    'epochs': 100,
+    'train_batch_size': 1000,
+    'validate_batch_size': 500,
+    'log_interval': 1
 }
 
 
-class Net(torch.nn.Module):
+class Net(nn.Module):
     def __init__(self, in_feature, out_feature):
         super(Net, self).__init__()
-        self.fc1 = torch.nn.Linear(in_feature, 10)
-        self.fc2 = torch.nn.Linear(10, 100)
-        self.fc3 = torch.nn.Linear(100, 500)
-        self.fc4 = torch.nn.Linear(500, 250)
-        self.fc5 = torch.nn.Linear(250, 125)
-        self.fc6 = torch.nn.Linear(125, 70)
-        self.fc7 = torch.nn.Linear(70, out_feature)
+        self.fc1 = nn.Linear(in_feature, 500)
+        self.fc1_bn = nn.BatchNorm1d(500)
 
-    def forward(self, x):
-        x = F.leaky_relu(self.fc1(x))
-        x = F.leaky_relu(self.fc2(x))
-        x = F.leaky_relu(self.fc3(x))
-        x = F.leaky_relu(self.fc4(x))
-        x = F.leaky_relu(self.fc5(x))
-        x = F.leaky_relu(self.fc6(x))
-        x = self.fc7(x)
+        self.conv1 = nn.Conv2d(1, 10, (5, 5), (1, 1))
+        self.conv1_bn = nn.BatchNorm2d(10)
+        self.conv2 = nn.Conv2d(10, 20, (3, 3), (1, 1))
+        self.conv2_bn = nn.BatchNorm2d(20)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc2 = nn.Linear(24500, 500)
+
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc3 = nn.Linear(1000, out_feature)
+
+    def forward(self, data, img):
+        # MLP for parameters
+        data = self.fc1(data)
+        data = F.relu(self.fc1_bn(data))
+
+        # Convolution network for airfoil image
+        img = self.conv1(img)
+        img = F.relu(self.conv1_bn(img))
+        img = self.conv2(img)
+        img = F.relu(self.conv2_bn(img))
+        img = F.max_pool2d(img, 2)
+        img = self.dropout1(img)
+        img = img.view([img.shape[0], -1])
+        img = F.relu(self.fc2(img))
+
+        # Combine two models to one
+        x = torch.cat((data, img), dim=1)
+        x = self.dropout2(x)
+        x = self.fc3(x)
         return x
 
 
 class CustomDataset(Dataset):
-    def __init__(self, input_data, output_data, seq, type):
+    def __init__(self, input_data, foil_name, output_data, seq, type):
         train_count = int(len(input_data) * 0.7)
         validate_count = int(len(input_data) * 0.2)
         if type == 'train':
@@ -50,43 +70,53 @@ class CustomDataset(Dataset):
             seq = seq[train_count:train_count + validate_count]
         elif type == 'test':
             seq = seq[train_count + validate_count:]
-        self.source = torch.Tensor(input_data[seq, :])
-        self.target = torch.Tensor(output_data[seq, :])
+        self.source = input_data[seq, :]
+        self.target = output_data[seq, :]
+        self.img_path = foil_name[seq]
+        self.transform = transforms.ToTensor()
 
     def __getitem__(self, idx):
-        return self.source[idx], self.target[idx]
+        img = Image.open('./data/img/' + str(self.img_path[idx])).convert('L')
+        return torch.Tensor(self.source[idx]), self.transform(img), \
+               torch.Tensor(self.target[idx])
 
     def __len__(self):
         return len(self.source)
 
 
-def train(epoch, model, data_loader, optimizer, dataset_size):
+def train(epoch, model, device, data_loader, optimizer, dataset_size):
     model.train()
     loss_val = 0
-    criterion = torch.nn.MSELoss()
-    for batch_idx, (data, target) in enumerate(data_loader):
+    criterion = nn.MSELoss()
+    for batch_idx, (data, img, target) in enumerate(data_loader):
+        data = data.to(device)
+        img = img.to(device)
+        target = target.to(device)
         optimizer.zero_grad()
-        output = model.forward(data)
+        output = model.forward(data, img)
         loss = criterion(output, target)
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
-        if batch_idx % 10 == 0:
+        if batch_idx % options['log_interval'] == 0:
             print("\rTrain Epoch: %ld [%5ld/%5ld] Loss: %.8f"
-                  % (epoch, batch_idx * data.shape[0], dataset_size,
+                  % (epoch, batch_idx * options['train_batch_size'], dataset_size,
                      loss_val / (dataset_size / options['train_batch_size'])),
                   end='')
     loss_val /= (dataset_size / options['train_batch_size'])
     train_loss.append(loss_val)
 
 
-def validate(model, data_loader, dataset_size):
+def validate(model, device, data_loader, dataset_size):
     loss_val = 0
     model.eval()
-    criterion = torch.nn.MSELoss()
+    criterion = nn.MSELoss()
     with torch.no_grad():
-        for batch_idx, (data, target) in enumerate(data_loader):
-            output = model.forward(data)
+        for batch_idx, (data, img, target) in enumerate(data_loader):
+            data = data.to(device)
+            img = img.to(device)
+            target = target.to(device)
+            output = model.forward(data, img)
             loss = criterion(output, target)
             loss_val += loss.item()
         loss_val /= (dataset_size / options['validate_batch_size'])
@@ -97,10 +127,10 @@ def validate(model, data_loader, dataset_size):
 def predict(model, data_loader, dataset_size):
     loss_val = 0
     model.eval()
-    criterion = torch.nn.MSELoss()
+    criterion = nn.MSELoss()
     with torch.no_grad():
-        for batch_idx, (data, target) in enumerate(data_loader):
-            output = model.forward(data)
+        for batch_idx, (data, img, target) in enumerate(data_loader):
+            output = model.forward(data, img)
             loss = criterion(output, target)
             loss_val += loss.item()
         loss_val /= dataset_size
@@ -108,8 +138,10 @@ def predict(model, data_loader, dataset_size):
 
 
 if __name__ == '__main__':
-    input = np.loadtxt('data/input.csv', delimiter=' ')
-    output = np.loadtxt('data/output.csv', delimiter=' ')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    input = np.loadtxt('./data/input.csv', delimiter=',')
+    output = np.loadtxt('./data/output.csv', delimiter=',')
+    foil_name = np.genfromtxt('./data/img_path.csv', delimiter=',', dtype='str')
 
     # 划分输出数据
     out_feature = 0
@@ -133,28 +165,46 @@ if __name__ == '__main__':
     output = (output - output_mean) / output_std
 
     # seq = np.random.permutation(input.shape[0])
-    # seq.tofile('data/seq.txt', sep=' ')
-    seq = np.loadtxt('data/seq.txt', delimiter=' ', dtype=int)
+    # seq.tofile('./data/seq.txt', sep=',')
+    # seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
+    seq = np.arange(input.shape[0])
 
     if options['method'] == 'train':
         # 构建网络
         model = Net(options['in_feature'], out_feature)
+        model.to(device)
         print(model)
-        optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'], weight_decay=options['weight_decay'])
 
         # 训练数据
-        train_dataset = CustomDataset(input, output, seq, 'train')
+        train_dataset = CustomDataset(input, foil_name, output, seq, 'train')
         train_dataset_size = len(train_dataset)
-        train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size=options['train_batch_size'])
+        train_data_loader = torch.utils.data.DataLoader(train_dataset,
+                                                        batch_size=options['train_batch_size'],
+                                                        shuffle=True,
+                                                        num_workers=12,
+                                                        pin_memory=True)
 
         # 验证数据
-        validate_dataset = CustomDataset(input, output, seq, 'validate')
+        validate_dataset = CustomDataset(input, foil_name, output, seq, 'validate')
         validate_dataset_size = len(validate_dataset)
-        validate_data_loader = torch.utils.data.DataLoader(validate_dataset, batch_size=options['validate_batch_size'], )
+        validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
+                                                           batch_size=options['validate_batch_size'],
+                                                           shuffle=True,
+                                                           num_workers=12,
+                                                           pin_memory=True)
+        # 学习率指数衰减
+        optimizer = torch.optim.SGD(model.parameters(), lr=options['learning_rate'],
+                                    momentum=0.9,
+                                    weight_decay=options['weight_decay'])
+        # optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
         for epoch in range(options['epochs']):
-            train(epoch, model, train_data_loader, optimizer, train_dataset_size)
-            validate(model, validate_data_loader, validate_dataset_size)
+            train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
+            validate(model, device, validate_data_loader, validate_dataset_size)
+            scheduler.step()
 
         model_path = 'model/model-%d-%.4f-%.4f.pt' % (options['epochs'], train_loss[-1], validate_loss[-1])
         figuer_path = 'model/model-%d-%.4f-%.4f.png' % (options['epochs'], train_loss[-1], validate_loss[-1])
@@ -172,7 +222,7 @@ if __name__ == '__main__':
 
     elif options['method'] == 'test':
         model = torch.load('./model/model-10-0.1065-0.1095.pt')
-        test_dataset = CustomDataset(input, output, seq, 'test')
+        test_dataset = CustomDataset(input, foil_name, output, seq, 'test')
         test_dataset_size = len(test_dataset)
         test_data_loader = torch.utils.data.DataLoader(test_dataset)
         predict(model, test_data_loader, test_dataset_size)

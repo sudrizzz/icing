@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from PIL import Image
 from math import sqrt, atan
 from scipy import interpolate
 from scipy.interpolate import interp1d
@@ -58,11 +59,11 @@ def generate_sequence(
     """
     生成结冰数据的文件名序列
 
+    :param alpha: 攻角
     :param velocity: 飞行速度
     :param temperature: 温度
     :param lwc: 液态水含量
     :param mvd: 水滴平均直径
-    :param alpha: 攻角
     :return: 文件名序列
     time = 1800s
     """
@@ -76,38 +77,32 @@ def generate_sequence(
     return sequence
 
 
-@jit
-def generate_input():
+# @jit
+def generate_input(new_data_path):
     """
     输入参数的全排列，并保存到 csv 文件中
     """
-
-    # 结冰部位：机翼与水平尾翼（平尾）
-    parts = ['wings', 'horizontal_stabilizer']
-
+    alpha = [-3, 1, 3]
     velocity = [60, 75, 90, 105, 125]
-    temperature = [-30, -20, -15, -10, -7.5, -5]
-    lwc = [0.1, 0.2, 0.5, 0.8, 1, 1.25]
-    mvd = [15, 20, 35, 40, 60]
-    time = [5, 10, 15, 22.5, 30, 45]
+    temperature = [-30, -20, -15, -10, -5]
+    lwc = [0.1, 0.2, 0.5, 0.8]
+    mvd = [15, 20, 35, 40]
 
-    for part in parts:
-        if part == 'wings':
-            alpha = [-4, -2, 0, 2, 4]
-        else:
-            alpha = [0, 2, 4, 6, 7]
-
-        path = './input/' + part + '.csv'
-        data = []
+    data = []
+    img_path = []
+    types = os.listdir(new_data_path)
+    for type in types:
         for a in alpha:
             for b in velocity:
                 for c in temperature:
                     for d in lwc:
                         for e in mvd:
-                            for f in time:
-                                data.append([a, b, c, d, e, f])
-        df = pd.DataFrame(data)
-        df.to_csv(path, sep=',', index=False, header=False)
+                            data.append([a, b, c, d, e])
+                            img_path.append(type + '.png')
+    df = pd.DataFrame(data)
+    df.to_csv('./data/input.csv', sep=',', index=False, header=False)
+    df = pd.DataFrame(img_path)
+    df.to_csv('./data/img_path.csv', sep=',', index=False, header=False)
 
 
 @jit
@@ -169,7 +164,7 @@ def load_data(data_rows, annotation_rows, data_path):
 
 
 @jit
-def extraction_ice_shape(raw_data_path, new_data_path, types, rows):
+def extraction_ice_shape(raw_data_path, new_data_path):
     """
     提取冰型及结冰部分的翼型，分别保存为 csv 并生成图像
 
@@ -178,17 +173,19 @@ def extraction_ice_shape(raw_data_path, new_data_path, types, rows):
     :param types: 翼型类型
     :param rows: 需要读取的行数
     """
+    rows = 401
+    types = os.listdir(raw_data_path)
     sequence = generate_sequence()
-    for index in range(len(types)):
+    for type in types:
         for number in sequence:
-            print(types[index], number)
+            print(type, number)
             ice, foil, body = load_data(data_rows=rows,
                                         annotation_rows=2,
-                                        data_path=raw_data_path + types[index] + '/' + str(number) + '.dat')
+                                        data_path=raw_data_path + type + '/' + str(number) + '.dat')
             df_ice = pd.DataFrame(ice)
             df_foil = pd.DataFrame(foil)
             df_body = pd.DataFrame(body)
-            data_path = new_data_path + types[index] + '/'
+            data_path = new_data_path + type + '/'
             path_ice = data_path + 'ice/'
             path_foil = data_path + 'foil/'
             path_body = data_path + 'body/'
@@ -376,7 +373,7 @@ def generate_fourier_coefficient(ksi, eta):
 
 
 @jit
-def save_fourier_coeffient(data_path):
+def save_fourier_coeffient(new_data_path):
     """
     保存傅里叶级数到 csv 文件
 
@@ -384,15 +381,15 @@ def save_fourier_coeffient(data_path):
     """
     sequence = generate_sequence()
     list, temp_list = [], []
-    types = os.listdir(data_path)
+    types = os.listdir(new_data_path)
     for type in types:
         print(type)
         temp_list = []
         for number in sequence:
             # 转换坐标系
-            full_foil_path = data_path + type + '/body/' + str(number) + '.csv'
-            partial_foil_path = data_path + type + '/foil/' + str(number) + '.csv'
-            ice_path = data_path + type + '/ice/' + str(number) + '.csv'
+            full_foil_path = new_data_path + type + '/body/' + str(number) + '.csv'
+            partial_foil_path = new_data_path + type + '/foil/' + str(number) + '.csv'
+            ice_path = new_data_path + type + '/ice/' + str(number) + '.csv'
             ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
             if ksi is None or eta is None:
                 list.append([])
@@ -402,11 +399,11 @@ def save_fourier_coeffient(data_path):
             coefficient = generate_fourier_coefficient(ksi, eta)
             list.append(coefficient)
             temp_list.append(coefficient)
-        path = 'C:/Users/xvyn/data/naca/output/' + type + '.csv'
+        path = './data/output/' + type + '.csv'
         df = pd.DataFrame(np.concatenate(temp_list))
         df.to_csv(path, sep=',', index=False, header=False)
 
-    path = 'C:/Users/xvyn/data/naca/output/fourier.csv'
+    path = './data/output/fourier.csv'
     df = pd.DataFrame(np.concatenate(list))
     df.to_csv(path, sep=',', index=False, header=False)
 
@@ -449,9 +446,9 @@ def generate_feature(types, radius, angle):
             aoa = [0, 2, 4, 6, 7]
         for number in sequence:
             print(types[index], number)
-            full_foil_path = './data/' + types[index] + '/body/' + str(number) + '.csv'
-            partial_foil_path = './data/' + types[index] + '/foil/' + str(number) + '.csv'
-            ice_path = './data/' + types[index] + '/ice/' + str(number) + '.csv'
+            full_foil_path = './body/' + types[index] + '/body/' + str(number) + '.csv'
+            partial_foil_path = './body/' + types[index] + '/foil/' + str(number) + '.csv'
+            ice_path = './body/' + types[index] + '/ice/' + str(number) + '.csv'
             ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
 
             # 找冰型驻点，如果为空则返回
@@ -589,3 +586,20 @@ def generate_feature(types, radius, angle):
         columns = ['编号', '上冰角高度', '下冰角高度', '驻点高度', '上极限', '下极限', '上冰角', '下冰角', '面积']
         df = pd.DataFrame(list, columns=columns)
         df.to_csv(path, sep=',', index=False, encoding='utf_8_sig')
+
+
+def generate_foil_images(path):
+    """
+    生成翼型数据
+    """
+    types = os.listdir(path)
+    for type in types:
+        foil = np.loadtxt('./data/body/' + type + '.csv', delimiter=',')
+        x, y = foil[:, 0], foil[:, 1] * 10
+        plt.gca().set_aspect('equal', adjustable='datalim')
+        plt.gcf().set_size_inches(1, 1)
+        plt.axis('off')
+        plt.plot(x, y, color='w', linewidth=1)
+        # plt.fill_between(x, y, color='w')
+        plt.savefig('./data/img/' + type + '.png', dpi=100, facecolor='black', bbox_inches='tight', pad_inches=0)
+        plt.clf()
