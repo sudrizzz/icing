@@ -13,7 +13,7 @@ if __name__ == '__main__':
     # 第零步
     # 生成翼型数据
     # generate_foil_body()
-    generate_input(new_data_path)
+    # generate_input(new_data_path)
 
     # 第一步
     # 从原始数据中提取冰型
@@ -25,7 +25,7 @@ if __name__ == '__main__':
 
     # 第三步
     # 根据翼型数据生成对应的图像
-    # generate_foil_images(new_data_path)
+    generate_foil_images(new_data_path)
 
     # 第四步
     # 训练神经网络

@@ -294,8 +294,8 @@ def generate_foil_body():
              '2421', '2424', '4412', '4415', '4418']
     display = False
     nb_points = 200
-    finite_te = True
-    half_cosine_spacing = False
+    finite_te = False
+    half_cosine_spacing = True
 
     for type in types:
         X, Y = naca(type, nb_points, finite_te, half_cosine_spacing)
@@ -305,6 +305,6 @@ def generate_foil_body():
             d.show()
         else:
             array = np.column_stack((X, Y))
-            np.savetxt('body/' + type + '.csv', array, delimiter=',')
+            np.savetxt('./data/body/' + type + '.csv', array, delimiter=',')
 
 

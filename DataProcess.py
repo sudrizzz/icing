@@ -597,9 +597,10 @@ def generate_foil_images(path):
         foil = np.loadtxt('./data/body/' + type + '.csv', delimiter=',')
         x, y = foil[:, 0], foil[:, 1] * 10
         plt.gca().set_aspect('equal', adjustable='datalim')
-        plt.gcf().set_size_inches(1, 1)
+        plt.gcf().set_size_inches(5, 5)
         plt.axis('off')
-        plt.plot(x, y, color='w', linewidth=1)
+        plt.plot(x, y, color='w', linewidth=5)
+        # plt.show()
         # plt.fill_between(x, y, color='w')
         plt.savefig('./data/img/' + type + '.png', dpi=100, facecolor='black', bbox_inches='tight', pad_inches=0)
         plt.clf()
