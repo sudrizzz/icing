@@ -13,44 +13,48 @@ options = {
     'method': 'train',
     'type': 'cosine',
     'in_feature': 5,
-    'learning_rate': 1e-2,
+    'learning_rate': 1e-3,
     'weight_decay': 1e-7,
     'epochs': 500,
     'train_batch_size': 64,
     'validate_batch_size': 1000,
-    'log_interval': 1
+    'log_interval': 1,
+    'image_size': 80
 }
 
 
 class Net(nn.Module):
     def __init__(self, in_feature, out_feature):
         super(Net, self).__init__()
-        self.fc1 = nn.Linear(in_feature, 500)
+        self.fc1 = nn.Linear(in_feature, 100)
+        self.fc1_bn = nn.BatchNorm1d(100)
+        self.fc2 = nn.Linear(100, 500)
+        self.fc2_bn = nn.BatchNorm1d(500)
 
-        self.conv1 = nn.Conv2d(1, 10, (5, 5), (1, 1))
-        self.conv2 = nn.Conv2d(10, 20, (3, 3), (1, 1))
-        self.dropout1 = nn.Dropout(0.25)
-        self.fc2 = nn.Linear(24500, 500)
+        self.conv1 = nn.Conv2d(1, 10, (5, 5), (2, 2))
+        self.conv1_bn = nn.BatchNorm2d(10)
+        self.conv2 = nn.Conv2d(10, 10, (3, 3), (2, 2))
+        self.conv2_bn = nn.BatchNorm2d(10)
 
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc3 = nn.Linear(1000, out_feature)
+        self.fc3 = nn.Linear(660, 125)
+        self.fc4 = nn.Linear(125, out_feature)
 
     def forward(self, data, img):
         # MLP for parameters
-        data = F.relu(self.fc1(data))
+        data = self.fc1_bn(F.relu(self.fc1(data)))
+        data = self.fc2_bn(F.relu(self.fc2(data)))
 
         # Convolution network for airfoil image
-        img = F.relu(self.conv1(img))
-        img = F.relu(self.conv2(img))
-        img = F.avg_pool2d(img, 2)
-        img = self.dropout1(img)
+        img = self.conv1_bn(F.relu(self.conv1(img)))
+        img = F.max_pool2d(img, (2, 2), (2, 2))
+        img = self.conv2_bn(F.relu(self.conv2(img)))
+        img = F.max_pool2d(img, (2, 2), (2, 2))
         img = img.view([img.shape[0], -1])
-        img = F.relu(self.fc2(img))
 
         # Combine two models to one
         x = torch.cat((data, img), dim=1)
-        x = self.dropout2(x)
-        x = self.fc3(x)
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
         return x
 
 
@@ -71,6 +75,7 @@ class CustomDataset(Dataset):
 
     def __getitem__(self, idx):
         img = Image.open('./data/img/' + str(self.img_path[idx])).convert('L')
+        img = img.resize((options['image_size'], options['image_size']), Image.ANTIALIAS)
         return torch.Tensor(self.source[idx]), self.transform(img), \
                torch.Tensor(self.target[idx])
 
@@ -96,7 +101,7 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
             sum = (batch_idx + 1) * options['train_batch_size']
             sum = sum if sum < dataset_size else dataset_size
             print("\rTrain Epoch: %ld [%5ld/%5ld] Loss: %.8f"
-                  % (epoch, sum, dataset_size, loss_val / len(data_loader)), end='')
+                  % (epoch + 1, sum, dataset_size, loss_val / len(data_loader)), end='')
     loss_val = loss_val / len(data_loader)
     train_loss.append(loss_val)
 
@@ -213,7 +218,8 @@ if __name__ == '__main__':
         plt.show()
 
     elif options['method'] == 'test':
-        model = torch.load('./model/model-10-0.1065-0.1095.pt')
+        model = torch.load('./model/model-100-0.2381-0.3610.pt')
+        print(model)
         test_dataset = CustomDataset(input, foil_name, output, seq, 'test')
         test_dataset_size = len(test_dataset)
         test_data_loader = torch.utils.data.DataLoader(test_dataset)
