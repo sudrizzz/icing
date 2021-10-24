@@ -13,11 +13,11 @@ options = {
     'method': 'train',
     'type': 'cosine',
     'in_feature': 5,
-    'learning_rate': 1e-3,
+    'learning_rate': 1e-2,
     'weight_decay': 1e-7,
-    'epochs': 100,
-    'train_batch_size': 1000,
-    'validate_batch_size': 500,
+    'epochs': 500,
+    'train_batch_size': 64,
+    'validate_batch_size': 1000,
     'log_interval': 1
 }
 
@@ -26,12 +26,9 @@ class Net(nn.Module):
     def __init__(self, in_feature, out_feature):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(in_feature, 500)
-        self.fc1_bn = nn.BatchNorm1d(500)
 
         self.conv1 = nn.Conv2d(1, 10, (5, 5), (1, 1))
-        self.conv1_bn = nn.BatchNorm2d(10)
         self.conv2 = nn.Conv2d(10, 20, (3, 3), (1, 1))
-        self.conv2_bn = nn.BatchNorm2d(20)
         self.dropout1 = nn.Dropout(0.25)
         self.fc2 = nn.Linear(24500, 500)
 
@@ -40,15 +37,12 @@ class Net(nn.Module):
 
     def forward(self, data, img):
         # MLP for parameters
-        data = self.fc1(data)
-        data = F.relu(self.fc1_bn(data))
+        data = F.relu(self.fc1(data))
 
         # Convolution network for airfoil image
-        img = self.conv1(img)
-        img = F.relu(self.conv1_bn(img))
-        img = self.conv2(img)
-        img = F.relu(self.conv2_bn(img))
-        img = F.max_pool2d(img, 2)
+        img = F.relu(self.conv1(img))
+        img = F.relu(self.conv2(img))
+        img = F.avg_pool2d(img, 2)
         img = self.dropout1(img)
         img = img.view([img.shape[0], -1])
         img = F.relu(self.fc2(img))
@@ -99,29 +93,29 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
         optimizer.step()
         loss_val += loss.item()
         if batch_idx % options['log_interval'] == 0:
+            sum = (batch_idx + 1) * options['train_batch_size']
+            sum = sum if sum < dataset_size else dataset_size
             print("\rTrain Epoch: %ld [%5ld/%5ld] Loss: %.8f"
-                  % (epoch, batch_idx * options['train_batch_size'], dataset_size,
-                     loss_val / (dataset_size / options['train_batch_size'])),
-                  end='')
-    loss_val /= (dataset_size / options['train_batch_size'])
+                  % (epoch, sum, dataset_size, loss_val / len(data_loader)), end='')
+    loss_val = loss_val / len(data_loader)
     train_loss.append(loss_val)
 
 
-def validate(model, device, data_loader, dataset_size):
+def validate(model, device, data_loader, optimizer):
     loss_val = 0
     model.eval()
     criterion = nn.MSELoss()
-    with torch.no_grad():
-        for batch_idx, (data, img, target) in enumerate(data_loader):
-            data = data.to(device)
-            img = img.to(device)
-            target = target.to(device)
-            output = model.forward(data, img)
-            loss = criterion(output, target)
-            loss_val += loss.item()
-        loss_val /= (dataset_size / options['validate_batch_size'])
-        print("\nValidate set: Average loss: %.8f" % loss_val)
-        validate_loss.append(loss_val)
+    optimizer.zero_grad()
+    for batch_idx, (data, img, target) in enumerate(data_loader):
+        data = data.to(device)
+        img = img.to(device)
+        target = target.to(device)
+        output = model.forward(data, img)
+        loss = criterion(output, target)
+        loss_val += loss.item()
+    loss_val = loss_val / len(data_loader)
+    print("\nValidate set: Average loss: %.8f" % loss_val)
+    validate_loss.append(loss_val)
 
 
 def predict(model, data_loader, dataset_size):
@@ -166,8 +160,7 @@ if __name__ == '__main__':
 
     # seq = np.random.permutation(input.shape[0])
     # seq.tofile('./data/seq.txt', sep=',')
-    # seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
-    seq = np.arange(input.shape[0])
+    seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
 
     if options['method'] == 'train':
         # 构建网络
@@ -180,7 +173,6 @@ if __name__ == '__main__':
         train_dataset_size = len(train_dataset)
         train_data_loader = torch.utils.data.DataLoader(train_dataset,
                                                         batch_size=options['train_batch_size'],
-                                                        shuffle=True,
                                                         num_workers=12,
                                                         pin_memory=True)
 
@@ -189,22 +181,22 @@ if __name__ == '__main__':
         validate_dataset_size = len(validate_dataset)
         validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
                                                            batch_size=options['validate_batch_size'],
-                                                           shuffle=True,
                                                            num_workers=12,
                                                            pin_memory=True)
         # 学习率指数衰减
-        optimizer = torch.optim.SGD(model.parameters(), lr=options['learning_rate'],
-                                    momentum=0.9,
-                                    weight_decay=options['weight_decay'])
-        # optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+        # optimizer = torch.optim.SGD(model.parameters(), lr=options['learning_rate'],
+        #                             momentum=0.9,
+        #                             weight_decay=options['weight_decay'])
+        optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
+        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
         for epoch in range(options['epochs']):
             train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
-            validate(model, device, validate_data_loader, validate_dataset_size)
-            scheduler.step()
+            validate(model, device, validate_data_loader, optimizer)
+            print('learning rate: ', optimizer.param_groups[0]['lr'])
+            scheduler.step(validate_loss[-1])
 
         model_path = 'model/model-%d-%.4f-%.4f.pt' % (options['epochs'], train_loss[-1], validate_loss[-1])
         figuer_path = 'model/model-%d-%.4f-%.4f.png' % (options['epochs'], train_loss[-1], validate_loss[-1])
