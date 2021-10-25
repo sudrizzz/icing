@@ -1,6 +1,7 @@
 from DataProcess import *
 from naca import generate_foil_body
-from network import init_network
+from network_conv import network_conv
+from network_mlp import network_mlp
 
 
 if __name__ == '__main__':
@@ -30,7 +31,8 @@ if __name__ == '__main__':
 
     # 第四步
     # 训练神经网络
-    init_network()
+    # network_conv()
+    network_mlp()
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图

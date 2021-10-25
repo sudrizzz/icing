@@ -1,7 +1,5 @@
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from PIL import Image
 from math import sqrt, atan
 from scipy import interpolate
 from scipy.interpolate import interp1d
@@ -84,12 +82,11 @@ def generate_input(new_data_path):
     """
     alpha = [-3, 1, 3]
     velocity = [60, 75, 90, 105, 125]
-    temperature = [-30, -20, -15, -10, -5]
-    lwc = [0.1, 0.2, 0.5, 0.8]
-    mvd = [15, 20, 35, 40]
+    temperature = [-25, -20, -15, -10, -5]
+    lwc = [0.2, 0.35, 0.55, 0.8]
+    mvd = [10, 15, 20, 30]
 
-    data = []
-    img_path = []
+    data, foil_paras, input_mlp, img_path = [], [], [], []
     types = os.listdir(new_data_path)
     for type in types:
         for a in alpha:
@@ -98,9 +95,16 @@ def generate_input(new_data_path):
                     for d in lwc:
                         for e in mvd:
                             data.append([a, b, c, d, e])
+                            if len(type) == 4:
+                                foil_paras.append([type[0], type[1], type[2:]])
+                                input_mlp.append([a, b, c, d, e])
                             img_path.append(type + '.png')
     df = pd.DataFrame(data)
     df.to_csv('./data/input.csv', sep=',', index=False, header=False)
+    df = pd.DataFrame(foil_paras)
+    df.to_csv('./data/foil_paras.csv', sep=',', index=False, header=False)
+    df = pd.DataFrame(input_mlp)
+    df.to_csv('./data/input_mlp.csv', sep=',', index=False, header=False)
     df = pd.DataFrame(img_path)
     df.to_csv('./data/img_path.csv', sep=',', index=False, header=False)
 
@@ -380,11 +384,10 @@ def save_fourier_coeffient(new_data_path):
     :return: None
     """
     sequence = generate_sequence()
-    list, temp_list = [], []
+    output, output_mlp = [], []
     types = os.listdir(new_data_path)
     for type in types:
         print(type)
-        temp_list = []
         for number in sequence:
             # 转换坐标系
             full_foil_path = new_data_path + type + '/body/' + str(number) + '.csv'
@@ -392,20 +395,20 @@ def save_fourier_coeffient(new_data_path):
             ice_path = new_data_path + type + '/ice/' + str(number) + '.csv'
             ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
             if ksi is None or eta is None:
-                list.append([])
+                output.append([])
+                print('error ', type)
                 continue
 
             # 将坐标数据展开为傅里叶级数
             coefficient = generate_fourier_coefficient(ksi, eta)
-            list.append(coefficient)
-            temp_list.append(coefficient)
-        path = './data/output/' + type + '.csv'
-        df = pd.DataFrame(np.concatenate(temp_list))
-        df.to_csv(path, sep=',', index=False, header=False)
+            output.append(coefficient)
+            if len(type) == 4:
+                output_mlp.append(coefficient)
 
-    path = 'data/output.csv'
-    df = pd.DataFrame(np.concatenate(list))
-    df.to_csv(path, sep=',', index=False, header=False)
+    df = pd.DataFrame(np.concatenate(output))
+    df.to_csv('data/output.csv', sep=',', index=False, header=False)
+    df = pd.DataFrame(np.concatenate(output_mlp))
+    df.to_csv('data/output_mlp.csv', sep=',', index=False, header=False)
 
 
 @jit
