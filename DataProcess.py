@@ -403,7 +403,7 @@ def save_fourier_coeffient(new_data_path):
         df = pd.DataFrame(np.concatenate(temp_list))
         df.to_csv(path, sep=',', index=False, header=False)
 
-    path = './data/output/fourier.csv'
+    path = 'data/output.csv'
     df = pd.DataFrame(np.concatenate(list))
     df.to_csv(path, sep=',', index=False, header=False)
 

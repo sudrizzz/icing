@@ -1,5 +1,6 @@
 from DataProcess import *
 from naca import generate_foil_body
+from network import init_network
 
 
 if __name__ == '__main__':
@@ -25,10 +26,11 @@ if __name__ == '__main__':
 
     # 第三步
     # 根据翼型数据生成对应的图像
-    generate_foil_images(new_data_path)
+    # generate_foil_images(new_data_path)
 
     # 第四步
     # 训练神经网络
+    init_network()
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图

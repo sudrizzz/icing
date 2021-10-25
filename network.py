@@ -136,7 +136,7 @@ def predict(model, data_loader, dataset_size):
         print("\nTest set: Average loss: %.8f" % loss_val)
 
 
-if __name__ == '__main__':
+def init_network():
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     input = np.loadtxt('./data/input.csv', delimiter=',')
     output = np.loadtxt('./data/output.csv', delimiter=',')
