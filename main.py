@@ -1,3 +1,5 @@
+import numpy as np
+
 from DataProcess import *
 from naca import generate_foil_body
 from network_conv import network_conv

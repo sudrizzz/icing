@@ -1,14 +1,15 @@
 import torch
-import torch.nn as nn
 import numpy as np
-from torch.utils.data import Dataset
-import torch.nn.functional as F
+import torch.nn as nn
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+from EarlyStopping import EarlyStopping
 
 train_loss = []
 validate_loss = []
 options = {
-    'method': 'train',
+    'method': 'test',
     'type': 'cosine',
     'in_feature': 5,
     'learning_rate': 1e-3,
@@ -31,13 +32,13 @@ class Net(nn.Module):
         self.fc6 = nn.Linear(125, out_feature)
 
     def forward(self, data, foil):
-        data = F.softplus(self.fc1(data))
+        data = F.leaky_relu(self.fc1(data))
         foil = F.leaky_relu(self.fc2(foil))
 
         x = torch.cat((data, foil), dim=1)
-        x = F.softplus(self.fc3(x))
-        x = F.softplus(self.fc4(x))
-        x = F.softplus(self.fc5(x))
+        x = F.leaky_relu(self.fc3(x))
+        x = F.leaky_relu(self.fc4(x))
+        x = F.leaky_relu(self.fc5(x))
         x = self.fc6(x)
         return x
 
@@ -97,17 +98,37 @@ def validate(model, data_loader, optimizer):
     validate_loss.append(loss_val)
 
 
-def predict(model, data_loader, dataset_size):
-    loss_val = 0
+def predict(model, data_loader):
     model.eval()
-    criterion = nn.MSELoss()
+    output_list = []
     with torch.no_grad():
         for batch_idx, (data, foil, target) in enumerate(data_loader):
             output = model.forward(data, foil)
-            loss = criterion(output, target)
-            loss_val += loss.item()
-        loss_val /= dataset_size
-        print("\nTest set: Average loss: %.8f" % loss_val)
+            output_list.append(output.data.cpu().numpy())
+    return output_list
+
+
+def save_model(model, epochs):
+    path = './model_mlp/%s-%d-%.4f-%.4f' \
+           % (options['type'], epochs, train_loss[-1], validate_loss[-1])
+    model_path = path + '.pt'
+    figure_path = path + '.png'
+    loss_path = path + '.txt'
+    torch.save(model, model_path)
+
+    loss = np.concatenate([np.array(train_loss).reshape([len(train_loss), 1]),
+                           np.array(validate_loss).reshape([len(validate_loss), 1])], axis=1)
+    loss.tofile(loss_path, sep=',')
+
+    plt.gcf().set_size_inches(8, 6)
+    plt.gcf().set_dpi(150)
+    plt.plot(np.linspace(0, epochs, epochs).tolist(), train_loss, label='train')
+    plt.plot(np.linspace(0, epochs, epochs).tolist(), validate_loss, label='validate')
+    plt.xlabel('epochs')
+    plt.ylabel('loss')
+    plt.legend()
+    plt.savefig(figure_path)
+    return model_path
 
 
 def network_mlp():
@@ -176,32 +197,23 @@ def network_mlp():
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
+        early_stopping = EarlyStopping()
         for epoch in range(options['epochs']):
             print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
             train(epoch, model, train_data_loader, optimizer, train_dataset_size)
             validate(model, validate_data_loader, optimizer)
             scheduler.step()
-
-        model_path = './model_mlp/%s-%d-%.4f-%.4f.pt' \
-                     % (options['type'], options['epochs'], train_loss[-1], validate_loss[-1])
-        figure_path = './model_mlp/%s-%d-%.4f-%.4f.png' \
-                      % (options['type'], options['epochs'], train_loss[-1], validate_loss[-1])
-        torch.save(model, model_path)
-
-        plt.gcf().set_size_inches(8, 6)
-        plt.gcf().set_dpi(150)
-        plt.plot(np.linspace(0, options['epochs'], options['epochs']).tolist(), train_loss, label='train')
-        plt.plot(np.linspace(0, options['epochs'], options['epochs']).tolist(), validate_loss, label='validate')
-        plt.xlabel('epochs')
-        plt.ylabel('loss')
-        plt.legend()
-        plt.savefig(figure_path)
-        plt.show()
+            if early_stopping(validate_loss[-1], model):
+                model_path = save_model(model, epoch + 1)
+                print('End training, model saved in %s' % model_path)
+                break
 
     elif options['method'] == 'test':
-        model = torch.load('./model_mlp/model-100-0.2381-0.3610.pt')
+        model = torch.load('./model_mlp/cosine-200-0.0354-0.0843.pt')
         print(model)
         test_dataset = CustomDataset(input, output, foil_paras, seq, 'test')
         test_dataset_size = len(test_dataset)
-        test_data_loader = torch.utils.data.DataLoader(test_dataset)
-        predict(model, test_data_loader, test_dataset_size)
+        test_data_loader = torch.utils.data.DataLoader(test_dataset, num_workers=4)
+        out = predict(model, test_data_loader)
+        output = np.array(out).reshape(test_dataset_size, out_feature)
+        output = output * output_std + output_mean
