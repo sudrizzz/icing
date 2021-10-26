@@ -86,7 +86,7 @@ def generate_input(new_data_path):
     lwc = [0.2, 0.35, 0.55, 0.8]
     mvd = [10, 15, 20, 30]
 
-    data, foil_paras, input_mlp, img_path = [], [], [], []
+    data, foil_paras, input_mlp, img_path, foil_path = [], [], [], [], []
     types = os.listdir(new_data_path)
     for type in types:
         for a in alpha:
@@ -97,6 +97,10 @@ def generate_input(new_data_path):
                             data.append([a, b, c, d, e])
                             if len(type) == 4:
                                 foil_paras.append([type[0], type[1], type[2:]])
+                                index = str(alpha.index(a) + 1) + str(velocity.index(b) + 1) \
+                                        + str(temperature.index(c) + 1) + str(lwc.index(d) + 1) \
+                                        + str(mvd.index(e) + 1)
+                                foil_path.append([type, index])
                                 input_mlp.append([a, b, c, d, e])
                             img_path.append(type + '.png')
     df = pd.DataFrame(data)
@@ -107,6 +111,8 @@ def generate_input(new_data_path):
     df.to_csv('./data/input_mlp.csv', sep=',', index=False, header=False)
     df = pd.DataFrame(img_path)
     df.to_csv('./data/img_path.csv', sep=',', index=False, header=False)
+    df = pd.DataFrame(foil_path)
+    df.to_csv('./data/foil_path_mlp.csv', sep=',', index=False, header=False)
 
 
 @jit
@@ -261,81 +267,103 @@ def convert_coordinate_system(full_foil_path, partial_foil_path, ice_path):
     return ksi, eta
 
 
-@jit
-def convert_coordinate_system_inversed(full_foil_path, partial_foil_path, constant, an, bn, limit):
+# @jit
+def convert_coordinate_system_inversed(data_path, seq_path, foil_info_path):
     """
     将机翼结冰数据从 ξ-η 坐标系转换到  x-y 坐标系
 
-    :param full_foil_path: 翼型的整体数据
-    :param partial_foil_path: 结冰部分的翼型数据
-    :param constant: 预测的傅里叶系数常数
-    :param an: 预测的傅里叶系数余弦项
-    :param bn: 预测的傅里叶系数正弦项
-    :param limit: 预测的结冰上下极限点
+    :param data: 预测生成的傅里叶系数
     :return:
     """
-    full_foil = np.loadtxt(full_foil_path, delimiter=',')
-    partial_foil = np.loadtxt(partial_foil_path, delimiter=',')
-    full_foil_x, full_foil_y = full_foil[:, 0], full_foil[:, 1]
-    foil_x, foil_y = partial_foil[:, 0], partial_foil[:, 1]
-    length = len(partial_foil)
+    # constant: 预测的傅里叶系数常数
+    # an: 预测的傅里叶系数余弦项
+    # bn: 预测的傅里叶系数正弦项
+    # limit: 预测的结冰上下极限点
 
-    # 计算翼型相邻两点之间的总距离（累加得到）
-    d, dis = np.zeros(len(full_foil)), np.zeros(len(full_foil))
-    for i in range(len(full_foil)):
-        if i > 0:
-            d[i] = sqrt((full_foil_x[i] - full_foil_x[i - 1]) ** 2 + (full_foil_y[i] - full_foil_y[i - 1]) ** 2)
-            dis[i] = dis[i - 1] + d[i]
+    data = np.loadtxt(data_path, delimiter=',')
+    seq = np.loadtxt(seq_path, delimiter=',', dtype=int)
+    foil_path = np.loadtxt(foil_info_path, delimiter=',', dtype=str)
+    total_samples = data.shape[0]
+    foil_path = foil_path[seq[-total_samples:]]
+    original_data_path = 'D:/Project/data/naca/data/'
 
-    # 计算翼型 x-y 坐标原点（最左端点）
-    origin = len(full_foil) // 2
-    # 结冰部分的翼型坐标起点，即结冰部分翼型数据的第一个坐标在全部翼型数据中出现的位置
-    starting_point = np.where((full_foil == partial_foil[0]).all(axis=1))[0][0]
+    for index in range(total_samples):
+        constant, an, bn, limit = data[index, 0], data[index, 1:31], data[index, 31:61], data[index, 61:63]
+        foil_name, foil_index = foil_path[index, 0], foil_path[index, 1]
 
-    # 保存翼型弧度坐标
-    radian = np.zeros(length)
-    for i in range(length):
-        radian[i] = dis[i + starting_point] - dis[origin]
-        # 上翼面弧长为正，下翼面弧长为负，故需要取反
-        radian[i] = -radian[i]
+        full_foil_path = original_data_path + foil_name + '/body/' + foil_index + '.csv'
+        partial_foil_path = original_data_path + foil_name + '/foil/' + foil_index + '.csv'
+        ground_truth_path = original_data_path + foil_name + '/ice/' + foil_index + '.csv'
+        full_foil = np.loadtxt(full_foil_path, delimiter=',')
+        partial_foil = np.loadtxt(partial_foil_path, delimiter=',')
+        ground_truth = np.loadtxt(ground_truth_path, delimiter=',')
 
-    # 获取结冰的上下极限点
-    ice_limit_upper = limit[0]
-    ice_limit_lower = limit[1]
+        full_foil_x, full_foil_y = full_foil[:, 0], full_foil[:, 1]
+        foil_x, foil_y = partial_foil[:, 0], partial_foil[:, 1]
+        ground_truth_x, ground_truth_y = ground_truth[:, 0], ground_truth[:, 1]
+        length = len(partial_foil)
 
-    # 按照 0.00001 间距插值
-    x = np.linspace(ice_limit_lower, ice_limit_upper, int((ice_limit_upper - ice_limit_lower) / 0.00001))
+        # 计算翼型相邻两点之间的总距离（累加得到）
+        d, dis = np.zeros(len(full_foil)), np.zeros(len(full_foil))
+        for i in range(len(full_foil)):
+            if i > 0:
+                d[i] = sqrt((full_foil_x[i] - full_foil_x[i - 1]) ** 2 + (full_foil_y[i] - full_foil_y[i - 1]) ** 2)
+                dis[i] = dis[i - 1] + d[i]
 
-    # 反傅里叶变换，得到冰型曲线
-    predicted_ice = inverse_fourier(constant, an, bn, x)
+        # 计算翼型 x-y 坐标原点（最左端点）
+        origin = len(full_foil) // 2
+        # 结冰部分的翼型坐标起点，即结冰部分翼型数据的第一个坐标在全部翼型数据中出现的位置
+        starting_point = np.where((full_foil == partial_foil[0]).all(axis=1))[0][0]
 
-    # 将冰型曲线小于 0 的部分重置为 0
-    _, cols = np.where(predicted_ice.reshape((1, len(predicted_ice))) < 0)
-    for col in cols:
-        predicted_ice[col] = 0
+        # 保存翼型弧度坐标
+        radian = np.zeros(length)
+        for i in range(length):
+            radian[i] = dis[i + starting_point] - dis[origin]
+            # 上翼面弧长为正，下翼面弧长为负，故需要取反
+            radian[i] = -radian[i]
 
-    # 三次样条插值，得到插值后的冰型 ξ-η 坐标曲线，并处理异常数据（小于 0 的部分重置为 0）
-    tck = interpolate.splrep(x, predicted_ice)
-    bspline = interpolate.splev(radian, tck)
-    _, cols = np.where(bspline.reshape((1, len(bspline))) < 0)
-    for col in cols:
-        bspline[col] = 0
+        # 获取结冰的上下极限点
+        ice_limit_upper = limit[0]
+        ice_limit_lower = limit[1]
 
-    # 将冰型数据以及翼型数据转换到 x-y 坐标系中，并将两者结合
-    ice_x, ice_y = np.zeros(length), np.zeros(length)
-    for i in range(length):
-        if i == 0:
-            ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - full_foil_y[i - 1 + starting_point]) / d[
-                i + starting_point]
-            ice_y[i] = foil_y[i] + bspline[i] * (full_foil_x[i - 1 + starting_point] - foil_x[i]) / d[
-                i + starting_point]
-        else:
-            ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - foil_y[i - 1]) / d[i + starting_point]
-            ice_y[i] = foil_y[i] + bspline[i] * (foil_x[i - 1] - foil_x[i]) / d[i + starting_point]
+        # 按照 0.00001 间距插值
+        x = np.linspace(ice_limit_lower, ice_limit_upper, int((ice_limit_upper - ice_limit_lower) / 0.00001))
 
-    plt.plot(ice_x, ice_y)
-    plt.plot(foil_x, foil_y)
-    plt.show()
+        # 反傅里叶变换，得到冰型曲线
+        predicted_ice = inverse_fourier(constant, an, bn, x)
+
+        # 将冰型曲线小于 0 的部分重置为 0
+        _, cols = np.where(predicted_ice.reshape((1, len(predicted_ice))) < 0)
+        for col in cols:
+            predicted_ice[col] = 0
+
+        # 三次样条插值，得到插值后的冰型 ξ-η 坐标曲线，并处理异常数据（小于 0 的部分重置为 0）
+        tck = interpolate.splrep(x, predicted_ice)
+        bspline = interpolate.splev(radian, tck)
+        _, cols = np.where(bspline.reshape((1, len(bspline))) < 0)
+        for col in cols:
+            bspline[col] = 0
+
+        # 将冰型数据以及翼型数据转换到 x-y 坐标系中，并将两者结合
+        ice_x, ice_y = np.zeros(length), np.zeros(length)
+        for i in range(length):
+            if i == 0:
+                ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - full_foil_y[i - 1 + starting_point]) / d[
+                    i + starting_point]
+                ice_y[i] = foil_y[i] + bspline[i] * (full_foil_x[i - 1 + starting_point] - foil_x[i]) / d[
+                    i + starting_point]
+            else:
+                ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - foil_y[i - 1]) / d[i + starting_point]
+                ice_y[i] = foil_y[i] + bspline[i] * (foil_x[i - 1] - foil_x[i]) / d[i + starting_point]
+
+        plt.gcf().set_size_inches(8, 6)
+        plt.plot(ice_x, ice_y, linestyle='--', linewidth=3)
+        plt.plot(ground_truth_x, ground_truth_y, linestyle='-.')
+        plt.plot(foil_x, foil_y, color='gray')
+        plt.legend(['predicted', 'ground truth', 'foil ' + foil_name])
+        plt.savefig('./output/img/' + foil_name + '-' + foil_index + '.png', dpi=100)
+        # plt.show()
+        plt.clf()
 
 
 @jit

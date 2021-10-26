@@ -10,14 +10,17 @@ train_loss = []
 validate_loss = []
 options = {
     'method': 'test',
-    'type': 'cosine',
+    'metrics': ['cosine', 'sine', 'limit'],
     'in_feature': 5,
     'learning_rate': 1e-3,
     'weight_decay': 1e-7,
     'epochs': 200,
     'train_batch_size': 64,
     'validate_batch_size': 100,
-    'log_interval': 1
+    'log_interval': 1,
+    'model_name': {'cosine': 'cosine-200-0.0354-0.0843.pt',
+                   'sine': 'sine-200-0.0395-0.0884.pt',
+                   'limit': 'limit-52-0.0024-0.0043.pt'}
 }
 
 
@@ -44,14 +47,14 @@ class Net(nn.Module):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, input_data, output_data, foil_paras, seq, type):
+    def __init__(self, input_data, output_data, foil_paras, seq, dataset):
         train_count = int(len(input_data) * 0.7)
         validate_count = int(len(input_data) * 0.2)
-        if type == 'train':
+        if dataset == 'train':
             seq = seq[:train_count]
-        elif type == 'validate':
+        elif dataset == 'validate':
             seq = seq[train_count:train_count + validate_count]
-        elif type == 'test':
+        elif dataset == 'test':
             seq = seq[train_count + validate_count:]
         self.source = input_data[seq, :]
         self.foil = foil_paras[seq, :]
@@ -76,10 +79,10 @@ def train(epoch, model, data_loader, optimizer, dataset_size):
         optimizer.step()
         loss_val += loss.item()
         if batch_idx % options['log_interval'] == 0:
-            sum = (batch_idx + 1) * options['train_batch_size']
-            sum = sum if sum < dataset_size else dataset_size
+            samples = (batch_idx + 1) * options['train_batch_size']
+            samples = samples if samples < dataset_size else dataset_size
             print("\rTrain Epoch: %ld [%5ld/%5ld] Loss: %.8f"
-                  % (epoch + 1, sum, dataset_size, loss_val / len(data_loader)), end='')
+                  % (epoch + 1, samples, dataset_size, loss_val / len(data_loader)), end='')
     loss_val = loss_val / len(data_loader)
     train_loss.append(loss_val)
 
@@ -108,9 +111,9 @@ def predict(model, data_loader):
     return output_list
 
 
-def save_model(model, epochs):
+def save_model(model, metric, epochs):
     path = './model_mlp/%s-%d-%.4f-%.4f' \
-           % (options['type'], epochs, train_loss[-1], validate_loss[-1])
+           % (metric, epochs, train_loss[-1], validate_loss[-1])
     model_path = path + '.pt'
     figure_path = path + '.png'
     loss_path = path + '.txt'
@@ -133,87 +136,96 @@ def save_model(model, epochs):
 
 def network_mlp():
     # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    input = np.loadtxt('./data/input_mlp.csv', delimiter=',')
-    output = np.loadtxt('./data/output_mlp.csv', delimiter=',')
-    foil_paras = np.loadtxt('./data/foil_paras.csv', delimiter=',')
+    result = []
 
-    # 划分输出数据
-    out_feature = 0
-    if options['type'] == 'cosine':
-        out_feature = 31
-        output = output[:, :31]
-    elif options['type'] == 'sine':
-        out_feature = 30
-        output = output[:, 31:61]
-    elif options['type'] == 'limit':
-        out_feature = 2
-        output = output[:, 61:63]
-    assert out_feature != 0
+    for metric in options['metrics']:
+        input_data = np.loadtxt('./data/input_mlp.csv', delimiter=',')
+        output_data = np.loadtxt('./data/output_mlp.csv', delimiter=',')
+        foil_paras = np.loadtxt('./data/foil_paras.csv', delimiter=',')
 
-    # 归一化输入与输出
-    input_mean = np.mean(input, axis=0)
-    input_std = np.std(input, axis=0)
-    output_mean = np.mean(output, axis=0)
-    output_std = np.std(output, axis=0)
-    foil_paras_mean = np.mean(foil_paras, axis=0)
-    foil_paras_std = np.std(foil_paras, axis=0)
-    input = (input - input_mean) / input_std
-    output = (output - output_mean) / output_std
-    foil_paras = (foil_paras - foil_paras_mean) / foil_paras_std
+        # 划分输出数据
+        out_feature = 0
+        if metric == 'cosine':
+            out_feature = 31
+            output_data = output_data[:, :31]
+        elif metric == 'sine':
+            out_feature = 30
+            output_data = output_data[:, 31:61]
+        elif metric == 'limit':
+            out_feature = 2
+            output_data = output_data[:, 61:63]
+        assert out_feature != 0
 
-    seq = np.random.permutation(input.shape[0])
-    seq.tofile('./data/seq_mlp.txt', sep=',')
-    # seq = np.loadtxt('./data/seq_mlp.txt', delimiter=',', dtype=int)
+        # 归一化输入与输出
+        input_mean = np.mean(input_data, axis=0)
+        input_std = np.std(input_data, axis=0)
+        output_mean = np.mean(output_data, axis=0)
+        output_std = np.std(output_data, axis=0)
+        foil_paras_mean = np.mean(foil_paras, axis=0)
+        foil_paras_std = np.std(foil_paras, axis=0)
+        input_data = (input_data - input_mean) / input_std
+        output_data = (output_data - output_mean) / output_std
+        foil_paras = (foil_paras - foil_paras_mean) / foil_paras_std
 
-    if options['method'] == 'train':
-        # 构建网络
-        model = Net(options['in_feature'], out_feature)
-        model.double()
-        print(model)
+        # seq = np.random.permutation(input_data.shape[0])
+        # seq.tofile('./data/seq_mlp.txt', sep=',')
+        seq = np.loadtxt('./data/seq_mlp.txt', delimiter=',', dtype=int)
 
-        # 训练数据
-        train_dataset = CustomDataset(input, output, foil_paras, seq, 'train')
-        train_dataset_size = len(train_dataset)
-        train_data_loader = torch.utils.data.DataLoader(train_dataset,
-                                                        batch_size=options['train_batch_size'],
-                                                        num_workers=4,
-                                                        pin_memory=True)
+        if options['method'] == 'train':
+            # 构建网络
+            model = Net(options['in_feature'], out_feature)
+            model.double()
+            print(model)
 
-        # 验证数据
-        validate_dataset = CustomDataset(input, output, foil_paras, seq, 'validate')
-        validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
-                                                           batch_size=options['validate_batch_size'],
-                                                           num_workers=4,
-                                                           pin_memory=True)
-        # 学习率指数衰减
-        # optimizer = torch.optim.SGD(model.parameters(),
-        #                             lr=options['learning_rate'],
-        #                             momentum=0.9,
-        #                             weight_decay=options['weight_decay'])
-        optimizer = torch.optim.Adam(model.parameters(),
-                                     lr=options['learning_rate'],
-                                     weight_decay=options['weight_decay'])
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
+            # 训练数据
+            train_dataset = CustomDataset(input_data, output_data, foil_paras, seq, 'train')
+            train_dataset_size = len(train_dataset)
+            train_data_loader = torch.utils.data.DataLoader(train_dataset,
+                                                            batch_size=options['train_batch_size'],
+                                                            num_workers=4,
+                                                            pin_memory=True)
 
-        early_stopping = EarlyStopping()
-        for epoch in range(options['epochs']):
-            print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
-            train(epoch, model, train_data_loader, optimizer, train_dataset_size)
-            validate(model, validate_data_loader, optimizer)
-            scheduler.step()
-            if early_stopping(validate_loss[-1], model):
-                model_path = save_model(model, epoch + 1)
-                print('End training, model saved in %s' % model_path)
-                break
+            # 验证数据
+            validate_dataset = CustomDataset(input_data, output_data, foil_paras, seq, 'validate')
+            validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
+                                                               batch_size=options['validate_batch_size'],
+                                                               num_workers=4,
+                                                               pin_memory=True)
+            # 学习率指数衰减
+            # optimizer = torch.optim.SGD(model.parameters(),
+            #                             lr=options['learning_rate'],
+            #                             momentum=0.9,
+            #                             weight_decay=options['weight_decay'])
+            optimizer = torch.optim.Adam(model.parameters(),
+                                         lr=options['learning_rate'],
+                                         weight_decay=options['weight_decay'])
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
+            # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
-    elif options['method'] == 'test':
-        model = torch.load('./model_mlp/cosine-200-0.0354-0.0843.pt')
-        print(model)
-        test_dataset = CustomDataset(input, output, foil_paras, seq, 'test')
-        test_dataset_size = len(test_dataset)
-        test_data_loader = torch.utils.data.DataLoader(test_dataset, num_workers=4)
-        out = predict(model, test_data_loader)
-        output = np.array(out).reshape(test_dataset_size, out_feature)
-        output = output * output_std + output_mean
+            early_stopping = EarlyStopping()
+            for epoch in range(options['epochs']):
+                print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
+                train(epoch, model, train_data_loader, optimizer, train_dataset_size)
+                validate(model, validate_data_loader, optimizer)
+                scheduler.step()
+                if early_stopping(validate_loss[-1], model):
+                    model_path = save_model(model, metric, epoch + 1)
+                    print('End training, model saved in %s' % model_path)
+                    break
+
+        elif options['method'] == 'test':
+            model_name = options['model_name'][metric]
+            model = torch.load('./model_mlp/' + model_name)
+            print(model)
+            test_dataset = CustomDataset(input_data, output_data, foil_paras, seq, 'test')
+            test_dataset_size = len(test_dataset)
+            test_data_loader = torch.utils.data.DataLoader(test_dataset, num_workers=4)
+            out = predict(model, test_data_loader)
+            predict_data = np.array(out).reshape(test_dataset_size, out_feature)
+            predict_data = predict_data * output_std + output_mean
+            result.append(predict_data)
+
+    if options['method'] == 'test':
+        data = np.column_stack([x for x in result])
+        np.savetxt('./output/output.csv', data, delimiter=',')

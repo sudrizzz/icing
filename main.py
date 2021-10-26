@@ -5,7 +5,6 @@ from naca import generate_foil_body
 from network_conv import network_conv
 from network_mlp import network_mlp
 
-
 if __name__ == '__main__':
     # 生成输入参数全排列
     # generate_input()
@@ -34,12 +33,14 @@ if __name__ == '__main__':
     # 第四步
     # 训练神经网络
     # network_conv()
-    network_mlp()
+    # network_mlp()
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图
-    # test = np.genfromtxt('./output/test.txt', delimiter='\t')
-    # convert_coordinate_system_inversed('./body/pingwei4.45/body/556656.csv', './body/pingwei4.45/foil/556656.csv', '', test[0], test[1:31], test[31:61], test[61:63])
+    data_path = './output/output.csv'
+    seq_path = './data/seq_mlp.txt'
+    foil_info_path = './data/foil_path_mlp.csv'
+    convert_coordinate_system_inversed(data_path, seq_path, foil_info_path)
 
     # new_data_path = './feature/'
     # save_glaze_ice(raw_data_path, new_data_path, types, rows)
