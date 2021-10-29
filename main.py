@@ -4,6 +4,7 @@ from DataProcess import *
 from naca import generate_foil_body
 from network_conv import network_conv
 from network_mlp import network_mlp
+from mnist import mnist
 
 if __name__ == '__main__':
     # 生成输入参数全排列
@@ -32,15 +33,16 @@ if __name__ == '__main__':
 
     # 第四步
     # 训练神经网络
-    # network_conv()
+    network_conv()
     # network_mlp()
+    # mnist()
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图
-    data_path = './output/output.csv'
-    seq_path = './data/seq_mlp.txt'
-    foil_info_path = './data/foil_path_mlp.csv'
-    convert_coordinate_system_inversed(data_path, seq_path, foil_info_path)
+    # data_path = './output/output.csv'
+    # seq_path = './data/seq_mlp.txt'
+    # foil_info_path = './data/foil_path_mlp.csv'
+    # convert_coordinate_system_inversed(data_path, seq_path, foil_info_path)
 
     # new_data_path = './feature/'
     # save_glaze_ice(raw_data_path, new_data_path, types, rows)

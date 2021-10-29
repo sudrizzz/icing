@@ -1,3 +1,5 @@
+import sys
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -86,14 +88,11 @@ class CustomDataset(Dataset):
 def train(epoch, model, device, data_loader, optimizer, dataset_size):
     model.train()
     loss_val = 0
-    criterion = nn.MSELoss()
     for batch_idx, (data, img, target) in enumerate(data_loader):
-        data = data.to(device)
-        img = img.to(device)
-        target = target.to(device)
+        data, img, target = data.to(device), img.to(device), target.to(device)
         optimizer.zero_grad()
-        output = model.forward(data, img)
-        loss = criterion(output, target)
+        output = model(data, img)
+        loss = F.mse_loss(output, target)
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
@@ -109,14 +108,10 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
 def validate(model, device, data_loader, optimizer):
     loss_val = 0
     model.eval()
-    criterion = nn.MSELoss()
-    optimizer.zero_grad()
     for batch_idx, (data, img, target) in enumerate(data_loader):
-        data = data.to(device)
-        img = img.to(device)
-        target = target.to(device)
+        data, img, target = data.to(device), img.to(device), target.to(device)
         output = model.forward(data, img)
-        loss = criterion(output, target)
+        loss = F.mse_loss(output, target)
         loss_val += loss.item()
     loss_val = loss_val / len(data_loader)
     print("\nValidate set: Average loss: %.8f" % loss_val)
@@ -163,6 +158,9 @@ def network_conv():
     input = (input - input_mean) / input_std
     output = (output - output_mean) / output_std
 
+    print(sys.getsizeof(input)  / 1024 / 1024)
+    print(sys.getsizeof(output) / 1024 / 1024)
+
     # seq = np.random.permutation(input.shape[0])
     # seq.tofile('./data/seq.txt', sep=',')
     seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
@@ -178,14 +176,14 @@ def network_conv():
         train_dataset_size = len(train_dataset)
         train_data_loader = torch.utils.data.DataLoader(train_dataset,
                                                         batch_size=options['train_batch_size'],
-                                                        num_workers=12,
+                                                        num_workers=1,
                                                         pin_memory=True)
 
         # 验证数据
         validate_dataset = CustomDataset(input, foil_name, output, seq, 'validate')
         validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
                                                            batch_size=options['validate_batch_size'],
-                                                           num_workers=12,
+                                                           num_workers=1,
                                                            pin_memory=True)
         # 学习率指数衰减
         # optimizer = torch.optim.SGD(model.parameters(), lr=options['learning_rate'],
