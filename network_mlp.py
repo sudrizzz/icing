@@ -9,7 +9,7 @@ from EarlyStopping import EarlyStopping
 train_loss = []
 validate_loss = []
 options = {
-    'method': 'test',
+    'method': 'train',
     'metrics': ['cosine', 'sine', 'limit'],
     'in_feature': 5,
     'learning_rate': 1e-3,

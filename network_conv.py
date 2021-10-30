@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from PIL import Image
+import cv2
 
 train_loss = []
 validate_loss = []
@@ -19,49 +19,54 @@ options = {
     'weight_decay': 1e-7,
     'epochs': 500,
     'train_batch_size': 64,
-    'validate_batch_size': 100,
-    'log_interval': 1,
-    'image_size': 80
+    'validate_batch_size': 1000,
+    'log_interval': 10,
 }
 
 
 class Net(nn.Module):
-    def __init__(self, in_feature, out_feature):
+    def __init__(self):
         super(Net, self).__init__()
-        self.fc1 = nn.Linear(in_feature, 100)
-        self.fc1_bn = nn.BatchNorm1d(100)
-        self.fc2 = nn.Linear(100, 500)
-        self.fc2_bn = nn.BatchNorm1d(500)
+        self.block1 = nn.Sequential(
+            nn.Linear(5, 256),
+            nn.Linear(256, 120000),
+        )
 
-        self.conv1 = nn.Conv2d(1, 10, (5, 5), (2, 2))
-        self.conv1_bn = nn.BatchNorm2d(10)
-        self.conv2 = nn.Conv2d(10, 10, (3, 3), (2, 2))
-        self.conv2_bn = nn.BatchNorm2d(10)
+        self.block2 = nn.Sequential(
+            nn.Conv2d(1, 8, (7, 7), padding='same'),
+            nn.BatchNorm2d(8),
+            nn.ReLU(),
+            nn.Conv2d(8, 16, (3, 3), padding='same'),
+            nn.BatchNorm2d(16),
+            nn.ReLU()
+        )
 
-        self.fc3 = nn.Linear(660, 125)
-        self.fc4 = nn.Linear(125, out_feature)
+        self.block3 = nn.Sequential(
+            nn.Conv2d(32, 16, (2, 2), padding='same'),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.Conv2d(16, 1, (1, 1), padding='same'),
+            nn.BatchNorm2d(1),
+            nn.ReLU()
+        )
 
     def forward(self, data, img):
         # MLP for parameters
-        data = self.fc1_bn(F.relu(self.fc1(data)))
-        data = self.fc2_bn(F.relu(self.fc2(data)))
+        data = self.block1(data)
+        data = data.reshape([-1, 1, 200, 600])
+        data = self.block2(data)
 
         # Convolution network for airfoil image
-        img = self.conv1_bn(F.relu(self.conv1(img)))
-        img = F.max_pool2d(img, (2, 2), (2, 2))
-        img = self.conv2_bn(F.relu(self.conv2(img)))
-        img = F.max_pool2d(img, (2, 2), (2, 2))
-        img = img.view([img.shape[0], -1])
+        img = self.block2(img)
 
         # Combine two models to one
         x = torch.cat((data, img), dim=1)
-        x = F.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.block3(x)
         return x
 
 
 class CustomDataset(Dataset):
-    def __init__(self, input_data, foil_name, output_data, seq, type):
+    def __init__(self, input_data, img, seq, type):
         train_count = int(len(input_data) * 0.7)
         validate_count = int(len(input_data) * 0.2)
         if type == 'train':
@@ -71,15 +76,18 @@ class CustomDataset(Dataset):
         elif type == 'test':
             seq = seq[train_count + validate_count:]
         self.source = input_data[seq, :]
-        self.target = output_data[seq, :]
-        self.img_path = foil_name[seq]
+        img = img[seq]
+        self.output_img = img
+        self.input_img = img[:, 0]
         self.transform = transforms.ToTensor()
 
     def __getitem__(self, idx):
-        img = Image.open('./data/img/' + str(self.img_path[idx])).convert('L')
-        img = img.resize((options['image_size'], options['image_size']), Image.ANTIALIAS)
-        return torch.Tensor(self.source[idx]), self.transform(img), \
-               torch.Tensor(self.target[idx])
+        input_img = cv2.imread('./data/img/foil/' + self.input_img[idx] + '.bmp', flags=0)
+        norm_input_img = cv2.normalize(input_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        output_img = cv2.imread('./data/img/' + self.output_img[idx, 0] + '/' + self.output_img[idx, 1] + '.bmp', flags=0)
+        norm_output_img = cv2.normalize(output_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        return torch.Tensor(self.source[idx]), self.transform(norm_input_img), \
+               self.transform(norm_output_img)
 
     def __len__(self):
         return len(self.source)
@@ -88,19 +96,19 @@ class CustomDataset(Dataset):
 def train(epoch, model, device, data_loader, optimizer, dataset_size):
     model.train()
     loss_val = 0
-    for batch_idx, (data, img, target) in enumerate(data_loader):
-        data, img, target = data.to(device), img.to(device), target.to(device)
+    for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
+        data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
         optimizer.zero_grad()
-        output = model(data, img)
-        loss = F.mse_loss(output, target)
+        output = model(data, input_img)
+        loss = F.l1_loss(output, output_img)
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
         if batch_idx % options['log_interval'] == 0:
-            sum = (batch_idx + 1) * options['train_batch_size']
-            sum = sum if sum < dataset_size else dataset_size
+            samples = (batch_idx + 1) * options['train_batch_size']
+            samples = samples if samples < dataset_size else dataset_size
             print("\rTrain Epoch: %ld [%5ld/%5ld] Loss: %.8f"
-                  % (epoch + 1, sum, dataset_size, loss_val / len(data_loader)), end='')
+                  % (epoch + 1, samples, dataset_size, loss_val / len(data_loader)), end='')
     loss_val = loss_val / len(data_loader)
     train_loss.append(loss_val)
 
@@ -108,10 +116,10 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
 def validate(model, device, data_loader, optimizer):
     loss_val = 0
     model.eval()
-    for batch_idx, (data, img, target) in enumerate(data_loader):
-        data, img, target = data.to(device), img.to(device), target.to(device)
-        output = model.forward(data, img)
-        loss = F.mse_loss(output, target)
+    for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
+        data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
+        output = model.forward(data, input_img)
+        loss = F.l1_loss(output, output_img)
         loss_val += loss.item()
     loss_val = loss_val / len(data_loader)
     print("\nValidate set: Average loss: %.8f" % loss_val)
@@ -121,11 +129,10 @@ def validate(model, device, data_loader, optimizer):
 def predict(model, data_loader, dataset_size):
     loss_val = 0
     model.eval()
-    criterion = nn.MSELoss()
     with torch.no_grad():
-        for batch_idx, (data, img, target) in enumerate(data_loader):
-            output = model.forward(data, img)
-            loss = criterion(output, target)
+        for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
+            output = model.forward(data, input_img)
+            loss = F.l1_loss(output, output_img)
             loss_val += loss.item()
         loss_val /= dataset_size
         print("\nTest set: Average loss: %.8f" % loss_val)
@@ -134,32 +141,14 @@ def predict(model, data_loader, dataset_size):
 def network_conv():
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     input = np.loadtxt('./data/input.csv', delimiter=',')
-    output = np.loadtxt('./data/output.csv', delimiter=',')
-    foil_name = np.genfromtxt('./data/img_path.csv', delimiter=',', dtype='str')
+    img_path = np.loadtxt('./data/img_path.csv', delimiter=',', dtype='str')
 
     # 划分输出数据
-    out_feature = 0
-    if options['type'] == 'cosine':
-        out_feature = 31
-        output = output[:, :31]
-    elif options['type'] == 'sine':
-        out_feature = 30
-        output = output[:, 31:61]
-    elif options['type'] == 'limit':
-        out_feature = 2
-        output = output[:, 61:63]
-    assert out_feature != 0
 
     # 归一化输入与输出
     input_mean = np.mean(input, axis=0)
     input_std = np.std(input, axis=0)
-    output_mean = np.mean(output, axis=0)
-    output_std = np.std(output, axis=0)
     input = (input - input_mean) / input_std
-    output = (output - output_mean) / output_std
-
-    print(sys.getsizeof(input)  / 1024 / 1024)
-    print(sys.getsizeof(output) / 1024 / 1024)
 
     # seq = np.random.permutation(input.shape[0])
     # seq.tofile('./data/seq.txt', sep=',')
@@ -167,12 +156,12 @@ def network_conv():
 
     if options['method'] == 'train':
         # 构建网络
-        model = Net(options['in_feature'], out_feature)
+        model = Net()
         model.to(device)
         print(model)
 
         # 训练数据
-        train_dataset = CustomDataset(input, foil_name, output, seq, 'train')
+        train_dataset = CustomDataset(input, img_path, seq, 'train')
         train_dataset_size = len(train_dataset)
         train_data_loader = torch.utils.data.DataLoader(train_dataset,
                                                         batch_size=options['train_batch_size'],
@@ -180,7 +169,7 @@ def network_conv():
                                                         pin_memory=True)
 
         # 验证数据
-        validate_dataset = CustomDataset(input, foil_name, output, seq, 'validate')
+        validate_dataset = CustomDataset(input, img_path, seq, 'validate')
         validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
                                                            batch_size=options['validate_batch_size'],
                                                            num_workers=1,
@@ -190,15 +179,15 @@ def network_conv():
         #                             momentum=0.9,
         #                             weight_decay=options['weight_decay'])
         optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
-        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
         for epoch in range(options['epochs']):
             train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
             validate(model, device, validate_data_loader, optimizer)
-            print('learning rate: ', optimizer.param_groups[0]['lr'])
-            scheduler.step(validate_loss[-1])
+            print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
+            scheduler.step()
 
         model_path = 'model/model-%d-%.4f-%.4f.pt' % (options['epochs'], train_loss[-1], validate_loss[-1])
         figuer_path = 'model/model-%d-%.4f-%.4f.png' % (options['epochs'], train_loss[-1], validate_loss[-1])
@@ -217,7 +206,7 @@ def network_conv():
     elif options['method'] == 'test':
         model = torch.load('./model/model-100-0.2381-0.3610.pt')
         print(model)
-        test_dataset = CustomDataset(input, foil_name, output, seq, 'test')
+        test_dataset = CustomDataset(input, img_path, seq, 'test')
         test_dataset_size = len(test_dataset)
         test_data_loader = torch.utils.data.DataLoader(test_dataset)
         predict(model, test_data_loader, test_dataset_size)

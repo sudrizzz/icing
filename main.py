@@ -22,6 +22,7 @@ if __name__ == '__main__':
     # 第一步
     # 从原始数据中提取冰型
     # extraction_ice_shape(raw_data_path, new_data_path)
+    # generate_ice_img(raw_data_path, new_data_path)
 
     # 第二步
     # 将 x-y 坐标数据转换为 ξ-η 坐标数据，然后将其拟合成傅里叶级数，并保存为 csv 文件
