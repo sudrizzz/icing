@@ -18,51 +18,64 @@ options = {
     'learning_rate': 1e-3,
     'weight_decay': 1e-7,
     'epochs': 200,
-    'train_batch_size': 64,
-    'validate_batch_size': 1000,
+    'train_batch_size': 256,
+    'validate_batch_size': 512,
     'log_interval': 10,
 }
 
 
 class Net(nn.Module):
-    def __init__(self, out_feature):
+    def __init__(self):
         super(Net, self).__init__()
         self.block1 = nn.Sequential(
-            nn.Conv2d(1, 8, (3, 3), (2, 2)),
-            nn.MaxPool2d((2, 2), (2, 2)),
-            nn.ReLU(),
-            nn.Conv2d(8, 16, (3, 3), (2, 2)),
-            nn.MaxPool2d((2, 2), (2, 2)),
-            nn.ReLU(),
-            nn.Conv2d(16, 16, (2, 2), (2, 2), padding=(1, 1)),
-            nn.MaxPool2d((2, 2)),
-            nn.Flatten(),
+            nn.Linear(5, 256),
+            nn.Linear(256, 60000),
         )
 
         self.block2 = nn.Sequential(
-            nn.Linear(5, 256),
+            nn.Conv2d(1, 8, (7, 7), stride=(2, 2)),
+            nn.BatchNorm2d(8),
             nn.ReLU(),
-            nn.Linear(256, 2048)
+            nn.Conv2d(8, 16, (3, 3), stride=(2, 2)),
+            nn.BatchNorm2d(16),
+            nn.ReLU()
         )
 
         self.block3 = nn.Sequential(
-            nn.Linear(3072, 512),
+            nn.Conv2d(1, 8, (7, 7), stride=(2, 2)),
+            nn.BatchNorm2d(8),
             nn.ReLU(),
-            nn.Linear(512, 128),
+            nn.Conv2d(8, 8, (3, 3), stride=(2, 2)),
+            nn.BatchNorm2d(8),
+            nn.ReLU()
+        )
+
+        self.block4 = nn.Sequential(
+            nn.ConvTranspose2d(24, 12, (5, 5), (2, 2)),
+            nn.BatchNorm2d(12),
             nn.ReLU(),
-            nn.Linear(128, out_features=out_feature)
+            nn.ConvTranspose2d(12, 1, (3, 3), (2, 2), output_padding=(1, 1)),
+            nn.BatchNorm2d(1),
+            nn.ReLU()
         )
 
     def forward(self, data, img):
-        img = self.block1(img)
+        # MLP for parameters
+        data = self.block1(data)
+        data = data.reshape([-1, 1, 200, 300])
         data = self.block2(data)
-        x = torch.cat([img, data], dim=1)
-        x = self.block3(x)
+
+        # Convolution network for airfoil image
+        img = self.block3(img)
+
+        # Combine two models to one
+        x = torch.cat((data, img), dim=1)
+        x = self.block4(x)
         return x
 
 
 class CustomDataset(Dataset):
-    def __init__(self, input_data, img, output_data, seq, type):
+    def __init__(self, input_data, img, seq, type):
         train_count = int(len(input_data) * 0.7)
         validate_count = int(len(input_data) * 0.2)
         if type == 'train':
@@ -71,19 +84,22 @@ class CustomDataset(Dataset):
             seq = seq[train_count:train_count + validate_count]
         elif type == 'test':
             seq = seq[train_count + validate_count:]
+        self.source = input_data[seq, :]
         img = img[seq]
-        self.input = input_data[seq, :]
-        self.output = output_data[seq, :]
-        self.img = img[:, 0]
+        self.output_img = img
+        self.input_img = img[:, 0]
         self.transform = transforms.ToTensor()
 
     def __getitem__(self, idx):
-        img = cv2.imread('./data/img/foil/' + self.img[idx] + '.bmp', flags=0)
-        norm_img = cv2.normalize(img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-        return torch.Tensor(self.input[idx]), self.transform(norm_img), torch.Tensor(self.output[idx])
+        input_img = cv2.imread('./data/img/foil/' + self.input_img[idx] + '.bmp', flags=0)
+        norm_input_img = cv2.normalize(input_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        output_img = cv2.imread('./data/img/' + self.output_img[idx, 0] + '/' + self.output_img[idx, 1] + '.bmp', flags=0)
+        norm_output_img = cv2.normalize(output_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        return torch.Tensor(self.source[idx]), self.transform(norm_input_img), \
+               self.transform(norm_output_img)
 
     def __len__(self):
-        return len(self.input)
+        return len(self.source)
 
 
 def train(epoch, model, device, data_loader, optimizer, dataset_size):
@@ -93,7 +109,7 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
         data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
         optimizer.zero_grad()
         output = model(data, input_img)
-        loss = F.mse_loss(output, output_img)
+        loss = F.l1_loss(output, output_img)
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
@@ -112,7 +128,7 @@ def validate(model, device, data_loader):
     for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
         data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
         output = model.forward(data, input_img)
-        loss = F.mse_loss(output, output_img)
+        loss = F.l1_loss(output, output_img)
         loss_val += loss.item()
     loss_val = loss_val / len(data_loader)
     print("\nValidate set: Average loss: %.8f" % loss_val)
@@ -125,7 +141,7 @@ def predict(model, data_loader, dataset_size):
     with torch.no_grad():
         for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
             output = model.forward(data, input_img)
-            loss = F.mse_loss(output, output_img)
+            loss = F.l1_loss(output, output_img)
             loss_val += loss.item()
         loss_val /= dataset_size
         print("\nTest set: Average loss: %.8f" % loss_val)
@@ -134,29 +150,14 @@ def predict(model, data_loader, dataset_size):
 def network_conv():
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     input = np.loadtxt('./data/input.csv', delimiter=',')
-    output = np.loadtxt('./data/output.csv', delimiter=',')
     img_path = np.loadtxt('./data/img_path.csv', delimiter=',', dtype='str')
 
     # 划分输出数据
-    out_feature = 0
-    if options['type'] == 'cosine':
-        out_feature = 31
-        output = output[:, :31]
-    elif options['type'] == 'sine':
-        out_feature = 30
-        output = output[:, 31:61]
-    elif options['type'] == 'limit':
-        out_feature = 2
-        output = output[:, 61:63]
-    assert out_feature != 0
 
     # 归一化输入与输出
     input_mean = np.mean(input, axis=0)
     input_std = np.std(input, axis=0)
-    output_mean = np.mean(output, axis=0)
-    output_std = np.std(output, axis=0)
     input = (input - input_mean) / input_std
-    output = (output - output_mean) / output_std
 
     # seq = np.random.permutation(input.shape[0])
     # seq.tofile('./data/seq.txt', sep=',')
@@ -164,12 +165,12 @@ def network_conv():
 
     if options['method'] == 'train':
         # 构建网络
-        model = Net(out_feature)
+        model = Net()
         model.to(device)
         print(model)
 
         # 训练数据
-        train_dataset = CustomDataset(input, img_path, output, seq, 'train')
+        train_dataset = CustomDataset(input, img_path, seq, 'train')
         train_dataset_size = len(train_dataset)
         train_data_loader = torch.utils.data.DataLoader(train_dataset,
                                                         batch_size=options['train_batch_size'],
@@ -177,14 +178,19 @@ def network_conv():
                                                         pin_memory=True)
 
         # 验证数据
-        validate_dataset = CustomDataset(input, img_path, output, seq, 'validate')
+        validate_dataset = CustomDataset(input, img_path, seq, 'validate')
         validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
                                                            batch_size=options['validate_batch_size'],
                                                            num_workers=1,
                                                            pin_memory=True)
         # 学习率指数衰减
+        # optimizer = torch.optim.SGD(model.parameters(), lr=options['learning_rate'],
+        #                             momentum=0.9,
+        #                             weight_decay=options['weight_decay'])
         optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, verbose=True)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
 
         for epoch in range(options['epochs']):
             train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
@@ -209,7 +215,7 @@ def network_conv():
     elif options['method'] == 'test':
         model = torch.load('./model/model-100-0.2381-0.3610.pt')
         print(model)
-        test_dataset = CustomDataset(input, img_path, output, seq, 'test')
+        test_dataset = CustomDataset(input, img_path, seq, 'test')
         test_dataset_size = len(test_dataset)
         test_data_loader = torch.utils.data.DataLoader(test_dataset)
         predict(model, test_data_loader, test_dataset_size)

@@ -627,20 +627,19 @@ def generate_foil_images(path):
     types = os.listdir(path)
     for type in types:
         foil = np.loadtxt('./data/body/' + type + '.csv', delimiter=',')
-        x, y = foil[:, 0], foil[:, 1]
-        plt.gca().set_aspect('equal')
-        plt.gcf().set_size_inches(12, 4)
-        plt.xlim(-0.1, 1.1)
-        plt.ylim(-0.2, 0.2)
+        x, y = foil[:, 0], foil[:, 1] * 10
+        plt.gca().set_aspect('equal', adjustable='datalim')
+        plt.gcf().set_size_inches(10, 10)
         plt.axis('off')
-        plt.plot(x, y, color='w', linewidth=3)
+        plt.plot(x, y, color='w', linewidth=5)
         # plt.title(type)
         # plt.show()
         # plt.fill_between(x, y, color='w')
-        plt.savefig('./data/img/' + type + '.png', dpi=150, facecolor='black', bbox_inches='tight', pad_inches=0)
-        img = cv2.imread('./data/img/' + type + '.png')
-        img = cv2.resize(img, (600, 200))
-        cv2.imwrite('./data/img/' + type + '.bmp', img)
+        plt.savefig('./data/img/foil/' + type + '.png', dpi=100, facecolor='black', bbox_inches='tight', pad_inches=0)
+        img = cv2.imread('./data/img/foil/' + type + '.png')
+        img = cv2.resize(img, (512, 512))
+        cv2.imwrite('./data/img/foil/' + type + '.bmp', img)
+        os.remove('./data/img/foil/' + type + '.png')
         plt.clf()
 
 @jit
@@ -652,8 +651,8 @@ def generate_ice_img(raw_data_path, new_data_path):
             ice = np.loadtxt(raw_data_path + '/' + foil + '/' + file, skiprows=405, max_rows=401)
             x, y = ice[:, 0], ice[:, 1]
             plt.gca().set_aspect('equal')
-            plt.gcf().set_size_inches(12, 4)
-            plt.xlim(-0.2, 1.0)
+            plt.gcf().set_size_inches(6, 4)
+            plt.xlim(-0.2, 0.4)
             plt.ylim(-0.2, 0.2)
             plt.axis('off')
             plt.plot(x, y, color='w', linewidth=3)
@@ -661,9 +660,9 @@ def generate_ice_img(raw_data_path, new_data_path):
             save_path = './data/img/' + foil + '/'
             filename = file.split('.')[0]
             check_dir([save_path])
-            plt.savefig(save_path + filename + '.png', dpi=150, facecolor='black', bbox_inches='tight', pad_inches=0)
+            plt.savefig(save_path + filename + '.png', dpi=100, facecolor='black', bbox_inches='tight', pad_inches=0)
             img = cv2.imread(save_path + filename + '.png')
-            img = cv2.resize(img, (600, 200))
+            img = cv2.resize(img, (300, 200))
             cv2.imwrite(save_path + filename + '.bmp', img)
             os.remove(save_path + filename + '.png')
             plt.clf()
