@@ -16,10 +16,10 @@ options = {
     'type': 'cosine',
     'in_feature': 5,
     'learning_rate': 1e-3,
-    'weight_decay': 1e-7,
+    'weight_decay': 1e-8,
     'epochs': 200,
     'train_batch_size': 64,
-    'validate_batch_size': 1000,
+    'validate_batch_size': 256,
     'log_interval': 10,
 }
 
@@ -29,24 +29,31 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.block1 = nn.Sequential(
             nn.Conv2d(1, 8, (3, 3), (2, 2)),
-            nn.MaxPool2d((2, 2), (2, 2)),
+            nn.MaxPool2d((3, 3), (2, 2)),
+            nn.BatchNorm2d(8),
             nn.ReLU(),
             nn.Conv2d(8, 16, (3, 3), (2, 2)),
-            nn.MaxPool2d((2, 2), (2, 2)),
+            nn.MaxPool2d((3, 3), (2, 2)),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.Conv2d(16, 16, (2, 2), (2, 2), padding=(1, 1)),
-            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (3, 3), (2, 2)),
+            nn.MaxPool2d((3, 3), (2, 2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, (3, 3), (2, 2)),
+            nn.MaxPool2d((3, 3), (2, 2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
             nn.Flatten(),
         )
 
         self.block2 = nn.Sequential(
-            nn.Linear(5, 256),
-            nn.ReLU(),
-            nn.Linear(256, 2048)
+            nn.Linear(5, 64),
+            nn.ReLU()
         )
 
         self.block3 = nn.Sequential(
-            nn.Linear(3072, 512),
+            nn.Linear(96, 512),
             nn.ReLU(),
             nn.Linear(512, 128),
             nn.ReLU(),
@@ -89,11 +96,11 @@ class CustomDataset(Dataset):
 def train(epoch, model, device, data_loader, optimizer, dataset_size):
     model.train()
     loss_val = 0
-    for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
-        data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
+    for batch_idx, (data, img, target) in enumerate(data_loader):
+        data, img, target = data.to(device), img.to(device), target.to(device)
         optimizer.zero_grad()
-        output = model(data, input_img)
-        loss = F.mse_loss(output, output_img)
+        output = model(data, img)
+        loss = F.mse_loss(output, target)
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
@@ -109,23 +116,24 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
 def validate(model, device, data_loader):
     loss_val = 0
     model.eval()
-    for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
-        data, input_img, output_img = data.to(device), input_img.to(device), output_img.to(device)
-        output = model.forward(data, input_img)
-        loss = F.mse_loss(output, output_img)
+    for batch_idx, (data, img, target) in enumerate(data_loader):
+        data, img, target = data.to(device), img.to(device), target.to(device)
+        output = model(data, img)
+        loss = F.mse_loss(output, target)
         loss_val += loss.item()
     loss_val = loss_val / len(data_loader)
     print("\nValidate set: Average loss: %.8f" % loss_val)
     validate_loss.append(loss_val)
 
 
-def predict(model, data_loader, dataset_size):
+def predict(model, device, data_loader, dataset_size):
     loss_val = 0
     model.eval()
     with torch.no_grad():
         for batch_idx, (data, input_img, output_img) in enumerate(data_loader):
-            output = model.forward(data, input_img)
-            loss = F.mse_loss(output, output_img)
+            data, img, target = data.to(device), img.to(device), target.to(device)
+            output = model(data, img)
+            loss = F.mse_loss(output, target)
             loss_val += loss.item()
         loss_val /= dataset_size
         print("\nTest set: Average loss: %.8f" % loss_val)
@@ -153,14 +161,14 @@ def network_conv():
     # 归一化输入与输出
     input_mean = np.mean(input, axis=0)
     input_std = np.std(input, axis=0)
+    input = (input - input_mean) / input_std
     output_mean = np.mean(output, axis=0)
     output_std = np.std(output, axis=0)
-    input = (input - input_mean) / input_std
     output = (output - output_mean) / output_std
 
-    # seq = np.random.permutation(input.shape[0])
-    # seq.tofile('./data/seq.txt', sep=',')
-    seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
+    seq = np.random.permutation(input.shape[0])
+    seq.tofile('./data/seq.txt', sep=',')
+    # seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
 
     if options['method'] == 'train':
         # 构建网络
@@ -173,17 +181,19 @@ def network_conv():
         train_dataset_size = len(train_dataset)
         train_data_loader = torch.utils.data.DataLoader(train_dataset,
                                                         batch_size=options['train_batch_size'],
-                                                        num_workers=1,
+                                                        num_workers=4,
                                                         pin_memory=True)
 
         # 验证数据
         validate_dataset = CustomDataset(input, img_path, output, seq, 'validate')
         validate_data_loader = torch.utils.data.DataLoader(validate_dataset,
                                                            batch_size=options['validate_batch_size'],
-                                                           num_workers=1,
+                                                           num_workers=4,
                                                            pin_memory=True)
         # 学习率指数衰减
-        optimizer = torch.optim.Adam(model.parameters(), lr=options['learning_rate'])
+        optimizer = torch.optim.Adam(model.parameters(),
+                                     lr=options['learning_rate'],
+                                     weight_decay=options['weight_decay'])
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
 
         for epoch in range(options['epochs']):
@@ -212,4 +222,4 @@ def network_conv():
         test_dataset = CustomDataset(input, img_path, output, seq, 'test')
         test_dataset_size = len(test_dataset)
         test_data_loader = torch.utils.data.DataLoader(test_dataset)
-        predict(model, test_data_loader, test_dataset_size)
+        predict(model, device, test_data_loader, test_dataset_size)
