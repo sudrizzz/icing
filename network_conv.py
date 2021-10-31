@@ -16,7 +16,7 @@ options = {
     'in_feature': 5,
     'learning_rate': 1e-3,
     'weight_decay': 1e-7,
-    'epochs': 1,
+    'epochs': 500,
     'train_batch_size': 64,
     'validate_batch_size': 100,
     'log_interval': 1,
@@ -143,6 +143,7 @@ def save_model(model, metric, epochs):
     plt.ylabel('loss')
     plt.legend()
     plt.savefig(figure_path)
+    plt.clf()
     return model_path
 
 
@@ -215,10 +216,12 @@ def network_conv():
                 validate(model, device, validate_data_loader)
                 print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
                 scheduler.step()
-                if early_stopping(validate_loss[-1], model):
-                    model_path = save_model(model, metric, epoch + 1)
-                    print('End training, model saved in %s' % model_path)
-                    break
+                # if early_stopping(validate_loss[-1], model):
+                #     model_path = save_model(model, metric, epoch + 1)
+                #     print('End training, model saved in %s' % model_path)
+                #     break
+            model_path = save_model(model, metric, epoch + 1)
+            print('End training, model saved in %s' % model_path)
 
         elif options['method'] == 'test':
             model = torch.load('./model/model-100-0.2381-0.3610.pt')
