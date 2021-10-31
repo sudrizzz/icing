@@ -28,35 +28,21 @@ class Net(nn.Module):
     def __init__(self, out_feature):
         super(Net, self).__init__()
         self.block1 = nn.Sequential(
-            nn.Conv2d(1, 8, (3, 3), (2, 2)),
-            nn.MaxPool2d((3, 3), (2, 2)),
-            nn.BatchNorm2d(8),
-            nn.ReLU(),
-            nn.Conv2d(8, 16, (3, 3), (2, 2)),
-            nn.MaxPool2d((3, 3), (2, 2)),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, (3, 3), (2, 2)),
-            nn.MaxPool2d((3, 3), (2, 2)),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, (3, 3), (2, 2)),
-            nn.MaxPool2d((3, 3), (2, 2)),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
+            nn.Conv2d(1, 8, (3, 3), (2, 2)), nn.MaxPool2d((2, 2), (2, 2)), nn.BatchNorm2d(8), nn.ReLU(),
+            nn.Conv2d(8, 16, (3, 3), (2, 2)), nn.MaxPool2d((2, 2), (2, 2)), nn.BatchNorm2d(16), nn.ReLU(),
+            nn.Conv2d(16, 32, (3, 3), (2, 2)), nn.MaxPool2d((2, 2), (2, 2)), nn.BatchNorm2d(32), nn.ReLU(),
+            nn.Conv2d(32, 32, (3, 3)), nn.MaxPool2d((2, 2), (2, 2)), nn.BatchNorm2d(32),
             nn.Flatten(),
         )
 
         self.block2 = nn.Sequential(
-            nn.Linear(5, 64),
-            nn.ReLU()
+            nn.Linear(5, 128), nn.ReLU()
         )
 
         self.block3 = nn.Sequential(
-            nn.Linear(96, 512),
-            nn.ReLU(),
-            nn.Linear(512, 128),
-            nn.ReLU(),
+            nn.Linear(256, 512), nn.ReLU(),
+            nn.Linear(512, 256), nn.ReLU(),
+            nn.Linear(256, 128), nn.ReLU(),
             nn.Linear(128, out_features=out_feature)
         )
 
@@ -194,7 +180,7 @@ def network_conv():
         optimizer = torch.optim.Adam(model.parameters(),
                                      lr=options['learning_rate'],
                                      weight_decay=options['weight_decay'])
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.985)
 
         for epoch in range(options['epochs']):
             train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
