@@ -1,5 +1,3 @@
-import numpy as np
-
 from DataProcess import *
 from naca import generate_foil_body
 from network_conv import network_conv
@@ -40,9 +38,9 @@ if __name__ == '__main__':
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图
-    # data_path = './output/output.csv'
-    # seq_path = './data/seq_mlp.txt'
-    # foil_info_path = './data/foil_path_mlp.csv'
+    data_path = './output/output.csv'
+    seq_path = './data/seq.txt'
+    foil_info_path = './data/img_path.csv'
     # convert_coordinate_system_inversed(data_path, seq_path, foil_info_path)
 
     # new_data_path = './feature/'

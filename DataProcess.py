@@ -268,7 +268,7 @@ def convert_coordinate_system(full_foil_path, partial_foil_path, ice_path):
     return ksi, eta
 
 
-# @jit
+@jit
 def convert_coordinate_system_inversed(data_path, seq_path, foil_info_path):
     """
     将机翼结冰数据从 ξ-η 坐标系转换到  x-y 坐标系

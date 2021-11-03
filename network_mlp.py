@@ -131,6 +131,7 @@ def save_model(model, metric, epochs):
     plt.ylabel('loss')
     plt.legend()
     plt.savefig(figure_path)
+    plt.clf()
     return model_path
 
 

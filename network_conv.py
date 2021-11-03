@@ -15,14 +15,14 @@ options = {
     'metrics': ['cosine', 'sine', 'limit'],
     'in_feature': 5,
     'learning_rate': 1e-3,
-    'weight_decay': 1e-7,
+    'weight_decay': 1e-8,
     'epochs': 500,
     'train_batch_size': 64,
-    'validate_batch_size': 100,
-    'log_interval': 1,
-    'model_name': {'cosine': 'cosine-200-0.0354-0.0843.pt',
-                   'sine': 'sine-200-0.0395-0.0884.pt',
-                   'limit': 'limit-52-0.0024-0.0043.pt'}
+    'validate_batch_size': 128,
+    'log_interval': 10,
+    'model_name': {'cosine': 'cosine-500-0.0341-0.1260.pt',
+                   'sine': 'sine-500-0.0387-0.1164.pt',
+                   'limit': 'limit-500-0.0003-0.0036.pt'}
 }
 
 
@@ -88,7 +88,8 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
         data, img, target = data.to(device), img.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data, img)
-        loss = F.mse_loss(output, target)
+        loss = F.huber_loss(output, target,
+                            delta=float(options['learning_rate']) / float(optimizer.param_groups[0]['lr']))
         loss.backward()
         optimizer.step()
         loss_val += loss.item()
@@ -101,25 +102,27 @@ def train(epoch, model, device, data_loader, optimizer, dataset_size):
     train_loss.append(loss_val)
 
 
-def validate(model, device, data_loader):
+def validate(model, device, data_loader, optimizer):
     loss_val = 0
     model.eval()
     for batch_idx, (data, img, target) in enumerate(data_loader):
         data, img, target = data.to(device), img.to(device), target.to(device)
         output = model(data, img)
-        loss = F.mse_loss(output, target)
+        loss = F.huber_loss(output, target,
+                            delta=float(options['learning_rate']) / float(optimizer.param_groups[0]['lr']))
         loss_val += loss.item()
     loss_val = loss_val / len(data_loader)
     print("\nValidate set: Average loss: %.8f" % loss_val)
     validate_loss.append(loss_val)
 
 
-def predict(model, data_loader):
+def predict(model, device, data_loader):
     model.eval()
     output_list = []
     with torch.no_grad():
-        for batch_idx, (data, foil, target) in enumerate(data_loader):
-            output = model.forward(data, foil)
+        for batch_idx, (data, img, _) in enumerate(data_loader):
+            data, img = data.to(device), img.to(device)
+            output = model(data, img)
             output_list.append(output.data.cpu().numpy())
     return output_list
 
@@ -180,9 +183,9 @@ def network_conv():
         output_std = np.std(output, axis=0)
         output = (output - output_mean) / output_std
 
-        seq = np.random.permutation(input.shape[0])
-        seq.tofile('./data/seq.txt', sep=',')
-        # seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
+        # seq = np.random.permutation(input.shape[0])
+        # seq.tofile('./data/seq.txt', sep=',')
+        seq = np.loadtxt('./data/seq.txt', delimiter=',', dtype=int)
 
         if options['method'] == 'train':
             # 构建网络
@@ -213,23 +216,25 @@ def network_conv():
             early_stopping = EarlyStopping()
             for epoch in range(options['epochs']):
                 train(epoch, model, device, train_data_loader, optimizer, train_dataset_size)
-                validate(model, device, validate_data_loader)
+                validate(model, device, validate_data_loader, optimizer)
                 print('learning rate: %.8f' % optimizer.param_groups[0]['lr'])
                 scheduler.step()
                 # if early_stopping(validate_loss[-1], model):
                 #     model_path = save_model(model, metric, epoch + 1)
                 #     print('End training, model saved in %s' % model_path)
                 #     break
-            model_path = save_model(model, metric, epoch + 1)
+            model_path = save_model(model, metric, options['epochs'])
             print('End training, model saved in %s' % model_path)
 
         elif options['method'] == 'test':
-            model = torch.load('./model/model-100-0.2381-0.3610.pt')
+            model_name = options['model_name'][metric]
+            model = torch.load('./model/' + model_name)
+            model.to(device)
             print(model)
             test_dataset = CustomDataset(input, img_path, output, seq, 'test')
             test_dataset_size = len(test_dataset)
             test_data_loader = torch.utils.data.DataLoader(test_dataset, num_workers=4)
-            out = predict(model, test_data_loader)
+            out = predict(model, device, test_data_loader)
             predict_data = np.array(out).reshape(test_dataset_size, out_feature)
             predict_data = predict_data * output_std + output_mean
             result.append(predict_data)
