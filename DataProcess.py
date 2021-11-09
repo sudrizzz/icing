@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from math import sqrt, atan
@@ -181,8 +182,6 @@ def extraction_ice_shape(raw_data_path, new_data_path):
 
     :param raw_data_path: 源文件地址
     :param new_data_path: 生成数据保存地址
-    :param types: 翼型类型
-    :param rows: 需要读取的行数
     """
     rows = 401
     types = os.listdir(raw_data_path)
@@ -214,7 +213,7 @@ def extraction_ice_shape(raw_data_path, new_data_path):
             plt.clf()
 
 
-# @jit
+@jit
 def convert_coordinate_system(full_foil_path, partial_foil_path, ice_path):
     """
     将机翼结冰数据从 x-y 坐标系转换到 ξ-η 坐标系
@@ -349,22 +348,29 @@ def convert_coordinate_system_inversed(data_path, seq_path, foil_info_path):
         ice_x, ice_y = np.zeros(length), np.zeros(length)
         for i in range(length):
             if i == 0:
-                ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - full_foil_y[i - 1 + starting_point]) / d[
-                    i + starting_point]
-                ice_y[i] = foil_y[i] + bspline[i] * (full_foil_x[i - 1 + starting_point] - foil_x[i]) / d[
-                    i + starting_point]
+                ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - full_foil_y[i - 1 + starting_point]) \
+                           / d[i + starting_point]
+                ice_y[i] = foil_y[i] + bspline[i] * (full_foil_x[i - 1 + starting_point] - foil_x[i]) \
+                           / d[i + starting_point]
             else:
                 ice_x[i] = foil_x[i] + bspline[i] * (foil_y[i] - foil_y[i - 1]) / d[i + starting_point]
                 ice_y[i] = foil_y[i] + bspline[i] * (foil_x[i - 1] - foil_x[i]) / d[i + starting_point]
+
+        max_x = np.max([np.max(ice_x), np.max(ground_truth_x)])
+        full_foil = full_foil[full_foil[:, 0] <= max_x + 0.02]
+        foil_x, foil_y = full_foil[:, 0], full_foil[:, 1]
 
         plt.gcf().set_size_inches(8, 6)
         plt.plot(ice_x, ice_y, linestyle='--', linewidth=3)
         plt.plot(ground_truth_x, ground_truth_y, linestyle='-.')
         plt.plot(foil_x, foil_y, color='gray')
         plt.legend(['predicted', 'ground truth', 'foil ' + foil_name])
-        plt.savefig('./output/img/' + foil_name + '-' + foil_index + '.png', dpi=100)
+        plt.savefig('./output/huber_loss/img/' + foil_name + '-' + foil_index + '.png', dpi=100)
         # plt.show()
         plt.clf()
+
+        ice = np.column_stack([ice_x, ice_y])
+        np.savetxt('./output/mse_loss/ice/' + foil_name + '-' + foil_index + '.csv', ice, delimiter=',')
 
 
 @jit
@@ -467,157 +473,171 @@ def get_stationary_point(ksi, eta, threshold=7):
 
 
 @jit
-def generate_feature(types, radius, angle):
+def generate_feature(full_foil_path, partial_foil_path, ice_path, radius, aoa):
+    """
+    对单一冰型进行分析，返回其八个特征参数
+    """
+
+    ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
+
+    # 找冰型驻点，如果为空则返回
+    if ksi is None or eta is None:
+        return None
+    point = get_stationary_point(ksi, eta, threshold=7)
+    if point is None:
+        return None
+
+    # 求驻点、上下冰角点及其高度
+    stationary_point = np.where(ksi == point[0])[0][0]  # 驻点
+    stationary_ice_horn = eta[stationary_point]
+    upper_ice_horn = np.max(eta[:stationary_point])  # 上冰角
+    upper_index = np.argmax(eta[:stationary_point])
+    lower_ice_horn = np.max(eta[stationary_point:])  # 下冰角
+    lower_index = np.argmax(eta[stationary_point:]) + stationary_point
+
+    full_foil = np.loadtxt(full_foil_path, delimiter=',')
+    partial_foil = np.loadtxt(partial_foil_path, delimiter=',')
+    full_foil_x, full_foil_y = full_foil[:, 0], full_foil[:, 1]
+    length = len(partial_foil)
+
+    # 计算翼型相邻两点之间的总距离（累加得到）
+    d, dis = np.zeros(len(full_foil)), np.zeros(len(full_foil))
+    for i in range(len(full_foil)):
+        if i > 0:
+            d[i] = sqrt((full_foil_x[i] - full_foil_x[i - 1]) ** 2 + (full_foil_y[i] - full_foil_y[i - 1]) ** 2)
+            dis[i] = dis[i - 1] + d[i]
+
+    # 计算翼型 x-y 坐标原点（最左端点）
+    origin = len(full_foil) // 2
+    # 结冰部分的翼型坐标起点，即结冰部分翼型数据的第一个坐标在全部翼型数据中出现的位置
+    starting_point = np.where((full_foil == partial_foil[0]).all(axis=1))[0][0]
+
+    # 保存翼型弧度坐标
+    radian = np.zeros(length)
+    for i in range(length):
+        radian[i] = dis[i + starting_point] - dis[origin]
+        # 上翼面弧长为正，下翼面弧长为负，故需要取反
+        radian[i] = -radian[i]
+
+    # 获取结冰的上下极限点
+    ice_limit_upper = ksi[0]
+    ice_limit_lower = ksi[-1]
+
+    # 按照 0.00001 间距插值
+    new_ksi = np.linspace(ice_limit_lower, ice_limit_upper, int((ice_limit_upper - ice_limit_lower) / 0.00001))
+    function = interp1d(ksi, eta, kind='slinear')
+    new_eta = function(new_ksi)
+
+    # 求结冰区域面积
+    area = 0
+    length = len(new_ksi)
+    for i in range(length - 1):
+        area += (new_ksi[i + 1] - new_ksi[i]) * (new_eta[i + 1] + new_eta[i]) / 2
+
+    # 将三个极值点画到 x-y 坐标系
+    foil = np.loadtxt(partial_foil_path, delimiter=',')
+    ice = np.loadtxt(ice_path, delimiter=',')
+    staionary_x, stationary_y = ice[stationary_point][0], ice[stationary_point][1]
+    upper_horn_x, upper_horn_y = ice[upper_index][0], ice[upper_index][1]
+    lower_horn_x, lower_horn_y = ice[lower_index][0], ice[lower_index][1]
+
+    # 三个极值点在机翼上对应的坐标
+    foil_staionary_x, foil_staionary_y = foil[stationary_point][0], foil[stationary_point][1]
+    foil_upper_horn_x, foil_upper_horn_y = foil[upper_index][0], foil[upper_index][1]
+    foil_lower_horn_x, foil_lower_horn_y = foil[lower_index][0], foil[lower_index][1]
+
+    # 获取机翼原点
+    origin_x = full_foil_x[(len(full_foil_x) - 1) // 2]
+    origin_y = full_foil_y[(len(full_foil_y) - 1) // 2]
+
+    # 获取机翼前缘点
+    leading_edge_point_x = radius * cos(aoa / 180)
+    leading_edge_point_y = origin_y - radius * sin(aoa / 180)
+    AssertionError(leading_edge_point_x >= 0)
+
+    # 求上冰角角度，以机翼前缘点为新的原点，划分四个象限，对四个象限中的冰角分开计算
+    if upper_horn_y >= leading_edge_point_y:
+        if upper_horn_x >= leading_edge_point_x:  # 第一象限
+            theta_upper = atan(
+                (upper_horn_y - leading_edge_point_y) / (upper_horn_x - leading_edge_point_x)) / pi * 180
+        else:  # 第二象限
+            theta_upper = 180 - atan(
+                (upper_horn_y - leading_edge_point_y) / (leading_edge_point_x - upper_horn_x)) / pi * 180
+    else:
+        if upper_horn_x < leading_edge_point_x:  # 第三象限
+            theta_upper = 180 + atan(
+                (leading_edge_point_y - upper_horn_y) / (leading_edge_point_x - upper_horn_x)) / pi * 180
+        else:  # 第四象限
+            theta_upper = 360 - atan(
+                (leading_edge_point_y - upper_horn_y) / (upper_horn_x - leading_edge_point_x)) / pi * 180
+
+    # 求下冰角角度
+    if lower_horn_y >= leading_edge_point_y:
+        if lower_horn_x >= leading_edge_point_x:  # 第一象限
+            theta_lower = atan(
+                (lower_horn_y - leading_edge_point_y) / (lower_horn_x - leading_edge_point_x)) / pi * 180
+        else:  # 第二象限
+            theta_lower = 180 - atan(
+                (lower_horn_y - leading_edge_point_y) / (leading_edge_point_x - lower_horn_x)) / pi * 180
+    else:
+        if lower_horn_x < leading_edge_point_x:  # 第三象限
+            theta_lower = 180 + atan(
+                (leading_edge_point_y - lower_horn_y) / (leading_edge_point_x - lower_horn_x)) / pi * 180
+        else:  # 第四象限
+            theta_lower = 360 - atan(
+                (leading_edge_point_y - lower_horn_y) / (lower_horn_x - leading_edge_point_x)) / pi * 180
+
+    # plt.subplot(1, 2, 1)
+    # plt.plot(ice[:, 0], ice[:, 1], 'red')
+    # plt.plot(foil[:, 0], foil[:, 1], 'green')
+    # plt.plot(staionary_x, stationary_y, 'o', color='brown')
+    # plt.plot(foil_staionary_x, foil_staionary_y, 'o', color='brown')
+    # plt.plot(upper_horn_x, upper_horn_y, 'o', color='c')
+    # plt.plot(foil_upper_horn_x, foil_upper_horn_y, 'o', color='c')
+    # plt.plot(lower_horn_x, lower_horn_y, 'o', color='orange')
+    # plt.plot(foil_lower_horn_x, foil_lower_horn_y, 'o', color='orange')
+    # plt.plot([staionary_x, foil_staionary_x], [stationary_y, foil_staionary_y], '--', color='brown')
+    # plt.plot([upper_horn_x, foil_upper_horn_x], [upper_horn_y, foil_upper_horn_y], '--', color='c')
+    # plt.plot([lower_horn_x, foil_lower_horn_x], [lower_horn_y, foil_lower_horn_y], '--', color='orange')
+    #
+    # # 将三个极值点画到 ξ-η 坐标系
+    # plt.subplot(1, 2, 2)
+    # plt.plot(ksi, eta)
+    # plt.plot(point[0], point[1], 'o', color='brown')
+    # plt.plot(ksi[upper_index], eta[upper_index], 'o', color='c')
+    # plt.plot(ksi[lower_index], eta[lower_index], 'o', color='orange')
+    # plt.show()
+
+    return upper_ice_horn, lower_ice_horn, stationary_ice_horn, ice_limit_upper, ice_limit_lower, \
+           theta_upper, theta_lower, area
+
+
+@jit
+def generate_feature_batch(data_path):
     sequence = generate_sequence()
+    types = os.listdir(data_path)
     for index in range(len(types)):
-        list = []
-        aoa = []
-        if index <= 3:
-            aoa = [-4, -2, 0, 2, 4]
-        else:
-            aoa = [0, 2, 4, 6, 7]
+        result = []
+        aoa = [3, 1, -3]
+        t = int(types[index][-2]) * 10 + int(types[index][-1])
+        radius = 1.1019 * t * t * 0.01 * 0.01
         for number in sequence:
             print(types[index], number)
-            full_foil_path = './body/' + types[index] + '/body/' + str(number) + '.csv'
-            partial_foil_path = './body/' + types[index] + '/foil/' + str(number) + '.csv'
-            ice_path = './body/' + types[index] + '/ice/' + str(number) + '.csv'
-            ksi, eta = convert_coordinate_system(full_foil_path, partial_foil_path, ice_path)
+            full_foil_path = data_path + types[index] + '/body/' + str(number) + '.csv'
+            partial_foil_path = data_path + types[index] + '/foil/' + str(number) + '.csv'
+            ice_path = data_path + types[index] + '/ice/' + str(number) + '.csv'
 
-            # 找冰型驻点，如果为空则返回
-            if ksi is None or eta is None:
-                continue
-            point = get_stationary_point(ksi, eta, threshold=7)
-            if point is None:
-                continue
+            upper_ice_horn, lower_ice_horn, stationary_ice_horn, ice_limit_upper, ice_limit_lower, \
+            theta_upper, theta_lower, area = \
+                generate_feature(full_foil_path, partial_foil_path, ice_path, radius, aoa[int(types[index][0]) - 1])
 
-            # 求驻点、上下冰角点及其高度
-            stationary_point = np.where(ksi == point[0])[0][0]  # 驻点
-            stationary_ice_horn = eta[stationary_point]
-            upper_ice_horn = np.max(eta[:stationary_point])  # 上冰角
-            upper_index = np.argmax(eta[:stationary_point])
-            lower_ice_horn = np.max(eta[stationary_point:])  # 下冰角
-            lower_index = np.argmax(eta[stationary_point:]) + stationary_point
+            result.append([number, upper_ice_horn, lower_ice_horn, stationary_ice_horn, ice_limit_upper,
+                           ice_limit_lower, theta_upper, theta_lower, area])
 
-            full_foil = np.loadtxt(full_foil_path, delimiter=',')
-            partial_foil = np.loadtxt(partial_foil_path, delimiter=',')
-            full_foil_x, full_foil_y = full_foil[:, 0], full_foil[:, 1]
-            length = len(partial_foil)
-
-            # 计算翼型相邻两点之间的总距离（累加得到）
-            d, dis = np.zeros(len(full_foil)), np.zeros(len(full_foil))
-            for i in range(len(full_foil)):
-                if i > 0:
-                    d[i] = sqrt((full_foil_x[i] - full_foil_x[i - 1]) ** 2 + (full_foil_y[i] - full_foil_y[i - 1]) ** 2)
-                    dis[i] = dis[i - 1] + d[i]
-
-            # 计算翼型 x-y 坐标原点（最左端点）
-            origin = len(full_foil) // 2
-            # 结冰部分的翼型坐标起点，即结冰部分翼型数据的第一个坐标在全部翼型数据中出现的位置
-            starting_point = np.where((full_foil == partial_foil[0]).all(axis=1))[0][0]
-
-            # 保存翼型弧度坐标
-            radian = np.zeros(length)
-            for i in range(length):
-                radian[i] = dis[i + starting_point] - dis[origin]
-                # 上翼面弧长为正，下翼面弧长为负，故需要取反
-                radian[i] = -radian[i]
-
-            # 获取结冰的上下极限点
-            ice_limit_upper = ksi[0]
-            ice_limit_lower = ksi[-1]
-
-            # 按照 0.00001 间距插值
-            new_ksi = np.linspace(ice_limit_lower, ice_limit_upper, int((ice_limit_upper - ice_limit_lower) / 0.00001))
-            function = interp1d(ksi, eta, kind='slinear')
-            new_eta = function(new_ksi)
-
-            # 求结冰区域面积
-            area = 0
-            length = len(new_ksi)
-            for i in range(length - 1):
-                area += (new_ksi[i + 1] - new_ksi[i]) * (new_eta[i + 1] + new_eta[i]) / 2
-
-            # 将三个极值点画到 x-y 坐标系
-            foil = np.loadtxt(partial_foil_path, delimiter=',')
-            ice = np.loadtxt(ice_path, delimiter=',')
-            staionary_x, stationary_y = ice[stationary_point][0], ice[stationary_point][1]
-            upper_horn_x, upper_horn_y = ice[upper_index][0], ice[upper_index][1]
-            lower_horn_x, lower_horn_y = ice[lower_index][0], ice[lower_index][1]
-
-            # 三个极值点在机翼上对应的坐标
-            foil_staionary_x, foil_staionary_y = foil[stationary_point][0], foil[stationary_point][1]
-            foil_upper_horn_x, foil_upper_horn_y = foil[upper_index][0], foil[upper_index][1]
-            foil_lower_horn_x, foil_lower_horn_y = foil[lower_index][0], foil[lower_index][1]
-
-            # 获取机翼原点
-            origin_x = full_foil_x[(len(full_foil_x) - 1) // 2]
-            origin_y = full_foil_y[(len(full_foil_y) - 1) // 2]
-
-            # 获取机翼前缘点
-            leading_edge_point_x = radius[index] * cos((angle[index] + aoa[number // 100000 - 1]) / 180)
-            leading_edge_point_y = origin_y - radius[index] * sin((angle[index] + aoa[number // 100000 - 1]) / 180)
-            AssertionError(leading_edge_point_x >= 0)
-
-            # 求上冰角角度，以机翼前缘点为新的原点，划分四个象限，对四个象限中的冰角分开计算
-            if upper_horn_y >= leading_edge_point_y:
-                if upper_horn_x >= leading_edge_point_x:  # 第一象限
-                    theta_upper = atan(
-                        (upper_horn_y - leading_edge_point_y) / (upper_horn_x - leading_edge_point_x)) / pi * 180
-                else:  # 第二象限
-                    theta_upper = 180 - atan(
-                        (upper_horn_y - leading_edge_point_y) / (leading_edge_point_x - upper_horn_x)) / pi * 180
-            else:
-                if upper_horn_x < leading_edge_point_x:  # 第三象限
-                    theta_upper = 180 + atan(
-                        (leading_edge_point_y - upper_horn_y) / (leading_edge_point_x - upper_horn_x)) / pi * 180
-                else:  # 第四象限
-                    theta_upper = 360 - atan(
-                        (leading_edge_point_y - upper_horn_y) / (upper_horn_x - leading_edge_point_x)) / pi * 180
-
-            # 求下冰角角度
-            if lower_horn_y >= leading_edge_point_y:
-                if lower_horn_x >= leading_edge_point_x:  # 第一象限
-                    theta_lower = atan(
-                        (lower_horn_y - leading_edge_point_y) / (lower_horn_x - leading_edge_point_x)) / pi * 180
-                else:  # 第二象限
-                    theta_lower = 180 - atan(
-                        (lower_horn_y - leading_edge_point_y) / (leading_edge_point_x - lower_horn_x)) / pi * 180
-            else:
-                if lower_horn_x < leading_edge_point_x:  # 第三象限
-                    theta_lower = 180 + atan(
-                        (leading_edge_point_y - lower_horn_y) / (leading_edge_point_x - lower_horn_x)) / pi * 180
-                else:  # 第四象限
-                    theta_lower = 360 - atan(
-                        (leading_edge_point_y - lower_horn_y) / (lower_horn_x - leading_edge_point_x)) / pi * 180
-
-            list.append([number, upper_ice_horn, lower_ice_horn, stationary_ice_horn, ice_limit_upper, ice_limit_lower,
-                         theta_upper, theta_lower, area])
-
-            # plt.subplot(1, 2, 1)
-            # plt.plot(ice[:, 0], ice[:, 1], 'red')
-            # plt.plot(foil[:, 0], foil[:, 1], 'green')
-            # plt.plot(staionary_x, stationary_y, 'o', color='brown')
-            # plt.plot(foil_staionary_x, foil_staionary_y, 'o', color='brown')
-            # plt.plot(upper_horn_x, upper_horn_y, 'o', color='c')
-            # plt.plot(foil_upper_horn_x, foil_upper_horn_y, 'o', color='c')
-            # plt.plot(lower_horn_x, lower_horn_y, 'o', color='orange')
-            # plt.plot(foil_lower_horn_x, foil_lower_horn_y, 'o', color='orange')
-            # plt.plot([staionary_x, foil_staionary_x], [stationary_y, foil_staionary_y], '--', color='brown')
-            # plt.plot([upper_horn_x, foil_upper_horn_x], [upper_horn_y, foil_upper_horn_y], '--', color='c')
-            # plt.plot([lower_horn_x, foil_lower_horn_x], [lower_horn_y, foil_lower_horn_y], '--', color='orange')
-            #
-            # # 将三个极值点画到 ξ-η 坐标系
-            # plt.subplot(1, 2, 2)
-            # plt.plot(ksi, eta)
-            # plt.plot(point[0], point[1], 'o', color='brown')
-            # plt.plot(ksi[upper_index], eta[upper_index], 'o', color='c')
-            # plt.plot(ksi[lower_index], eta[lower_index], 'o', color='orange')
-            # plt.show()
-
-        path = './output/feature/' + types[index] + '.csv'
+        save_path = './output/feature/' + types[index] + '.csv'
         columns = ['编号', '上冰角高度', '下冰角高度', '驻点高度', '上极限', '下极限', '上冰角', '下冰角', '面积']
-        df = pd.DataFrame(list, columns=columns)
-        df.to_csv(path, sep=',', index=False, encoding='utf_8_sig')
+        df = pd.DataFrame(result, columns=columns)
+        df.to_csv(save_path, sep=',', index=False, encoding='utf_8_sig')
 
 
 def generate_foil_images(path):
@@ -641,6 +661,7 @@ def generate_foil_images(path):
         cv2.imwrite('./data/img/foil/' + type + '.bmp', img)
         os.remove('./data/img/foil/' + type + '.png')
         plt.clf()
+
 
 @jit
 def generate_ice_img(raw_data_path, new_data_path):
@@ -666,3 +687,38 @@ def generate_ice_img(raw_data_path, new_data_path):
             cv2.imwrite(save_path + filename + '.bmp', img)
             os.remove(save_path + filename + '.png')
             plt.clf()
+
+
+def compare(mse_path, huber_path, gt_path):
+    items = os.listdir(mse_path)
+    for item in items:
+        paras = item[:-4].split('-')
+        foil_name, index = paras[0], paras[1]
+
+        mse_result = np.loadtxt(mse_path + item, delimiter=',')
+        x1, y1 = mse_result[:, 0], mse_result[:, 1]
+
+        huber_result = np.loadtxt(huber_path + item, delimiter=',')
+        x2, y2 = huber_result[:, 0], huber_result[:, 1]
+
+        temp_path = os.path.join(gt_path, foil_name, 'ice', index + '.csv')
+        gt_result = np.loadtxt(temp_path, delimiter=',')
+        gt_x, gt_y = gt_result[:, 0], gt_result[:, 1]
+
+        temp_path = os.path.join(gt_path, foil_name, 'body', index + '.csv')
+        full_foil = np.loadtxt(temp_path, delimiter=',')
+
+        max_x = np.max([np.max(x1), np.max(x2), np.max(gt_x)])
+        full_foil = full_foil[full_foil[:, 0] <= max_x + 0.02]
+        foil_x, foil_y = full_foil[:, 0], full_foil[:, 1]
+
+        plt.gcf().set_size_inches(8, 6)
+        plt.plot(x1, y1, linestyle='--', linewidth=2)
+        plt.plot(x2, y2, linestyle='-.', linewidth=2)
+        plt.plot(gt_x, gt_y, linewidth=1)
+        plt.plot(foil_x, foil_y, color='gray')
+        plt.legend(['mse', 'huber', 'gt', 'foil'])
+        plt.title('NACA ' + foil_name)
+        plt.savefig('./output/compare/' + foil_name + '-' + index + '.png', dpi=100)
+        # plt.show()
+        plt.clf()

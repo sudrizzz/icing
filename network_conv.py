@@ -11,7 +11,7 @@ from EarlyStopping import EarlyStopping
 train_loss = []
 validate_loss = []
 options = {
-    'method': 'train',
+    'method': 'test',
     'metrics': ['cosine', 'sine', 'limit'],
     'in_feature': 5,
     'learning_rate': 1e-3,
@@ -20,9 +20,9 @@ options = {
     'train_batch_size': 64,
     'validate_batch_size': 128,
     'log_interval': 10,
-    'model_name': {'cosine': 'cosine-500-0.0341-0.1260.pt',
-                   'sine': 'sine-500-0.0387-0.1164.pt',
-                   'limit': 'limit-500-0.0003-0.0036.pt'}
+    'model_name': {'cosine': 'cosine-500-0.0132-0.0564.pt',
+                   'sine': 'sine-500-0.0114-0.0476.pt',
+                   'limit': 'limit-500-0.0001-0.0029.pt'}
 }
 
 

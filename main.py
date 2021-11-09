@@ -9,8 +9,8 @@ if __name__ == '__main__':
     # generate_input()
 
     # 提取冰型、结冰部分翼型以及完整翼型，并保存
-    raw_data_path = 'D:/Project/data/naca/raw_data/'
-    new_data_path = 'D:/Project/data/naca/data/'
+    raw_data_path = 'D:/Project/data/naca/test_raw_data/'
+    new_data_path = 'D:/Project/data/naca/test_data/'
 
     # 第零步
     # 生成翼型数据
@@ -38,12 +38,15 @@ if __name__ == '__main__':
 
     # 第五步
     # 读入预测的傅里叶级数，将其通过反傅里叶变换转换为 ξ-η 坐标数据，进一步转换为 x-y 坐标数据，并绘制冰型图
-    data_path = './output/output.csv'
-    seq_path = './data/seq.txt'
-    foil_info_path = './data/img_path.csv'
+    # data_path = './output/mse_loss/output.csv'
+    # seq_path = './data/seq.txt'
+    # foil_info_path = './data/img_path.csv'
     # convert_coordinate_system_inversed(data_path, seq_path, foil_info_path)
 
-    # new_data_path = './feature/'
-    # save_glaze_ice(raw_data_path, new_data_path, types, rows)
-
-
+    # 第六步
+    # 对结果进行分析
+    # generate_feature_batch()
+    # 画对比图
+    # mse_result = './output/mse_loss/ice/'
+    # huber_result = './output/huber_loss/ice/'
+    # compare(mse_result, huber_result, new_data_path)
